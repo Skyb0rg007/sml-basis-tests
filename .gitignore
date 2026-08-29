@@ -1,0 +1,19 @@
+# SML/NJ
+.cm/
+basis-tests.*-*
+
+# MLton / MLKit
+MLB/
+basis-tests-mlton
+basis-tests-mlkit
+
+# Poly/ML
+*.o
+*.polysave
+
+# Moscow ML
+*.ui
+*.uo
+
+# scratch directory created by the file-system tests
+scratch/
