@@ -125,7 +125,8 @@ may distribute the surrounding call into both arms and fold the constant one.
 `ArraySlice`, `Real`, `Math`, `IEEEReal`, `Time`, `OS.Path`, `OS.Process`,
 `Byte`, `Word8Vector`, `Word8Array`, `TextIO`.
 
-Roughly 690 tests, about half of them properties.
+689 tests: 390 unit tests and 299 properties. At the default 100 trials, a
+full run evaluates roughly 30,000 generated cases.
 
 Deliberately not covered: the optional structures listed above, plus `Date`
 and `Timer` (almost entirely environment-dependent), `BinIO`, `IEEEReal`'s
