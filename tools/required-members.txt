@@ -42,12 +42,16 @@ Option.map
 Option.mapPartial
 Option.compose
 Option.composePartial
+Option.NONE
+Option.SOME
 
 # ---- Bool ----
 Bool.not
 Bool.toString
 Bool.fromString
 Bool.scan
+Bool.false
+Bool.true
 
 # ---- List ----
 List.Empty
@@ -75,6 +79,7 @@ List.exists
 List.all
 List.tabulate
 List.collate
+List.nil
 
 # ---- ListPair ----
 ListPair.UnequalLengths
@@ -324,6 +329,8 @@ Int.fmt
 Int.toString
 Int.scan
 Int.fromString
+Int.div
+Int.mod
 
 # ---- LargeInt ----
 LargeInt.toLarge
@@ -345,6 +352,8 @@ LargeInt.fmt
 LargeInt.toString
 LargeInt.scan
 LargeInt.fromString
+LargeInt.div
+LargeInt.mod
 
 # ---- Position ----
 Position.toLarge
@@ -358,6 +367,16 @@ Position.sign
 Position.fmt
 Position.toString
 Position.fromString
+Position.div
+Position.max
+Position.maxInt
+Position.min
+Position.minInt
+Position.mod
+Position.quot
+Position.rem
+Position.sameSign
+Position.scan
 
 # ---- Word ----
 Word.wordSize
@@ -381,6 +400,11 @@ Word.fmt
 Word.toString
 Word.scan
 Word.fromString
+Word.div
+Word.fromLargeWord
+Word.mod
+Word.toLargeWord
+Word.toLargeWordX
 
 # ---- Word8 ----
 Word8.wordSize
@@ -391,6 +415,24 @@ Word8.notb
 Word8.compare
 Word8.toString
 Word8.fromString
+Word8.andb
+Word8.div
+Word8.fmt
+Word8.fromLarge
+Word8.fromLargeInt
+Word8.fromLargeWord
+Word8.max
+Word8.min
+Word8.mod
+Word8.orb
+Word8.scan
+Word8.toLarge
+Word8.toLargeInt
+Word8.toLargeIntX
+Word8.toLargeWord
+Word8.toLargeWordX
+Word8.toLargeX
+Word8.xorb
 
 # ---- LargeWord ----
 LargeWord.wordSize
@@ -409,6 +451,16 @@ LargeWord.fmt
 LargeWord.toString
 LargeWord.scan
 LargeWord.fromString
+LargeWord.div
+LargeWord.fromLarge
+LargeWord.fromLargeInt
+LargeWord.fromLargeWord
+LargeWord.mod
+LargeWord.toLargeInt
+LargeWord.toLargeIntX
+LargeWord.toLargeWord
+LargeWord.toLargeWordX
+LargeWord.toLargeX
 
 # ---- Real ----
 Real.radix
@@ -466,6 +518,49 @@ LargeReal.radix
 LargeReal.fromInt
 LargeReal.abs
 LargeReal.floor
+LargeReal.ceil
+LargeReal.checkFloat
+LargeReal.class
+LargeReal.compare
+LargeReal.compareReal
+LargeReal.copySign
+LargeReal.fmt
+LargeReal.fromDecimal
+LargeReal.fromLarge
+LargeReal.fromLargeInt
+LargeReal.fromManExp
+LargeReal.fromString
+LargeReal.isFinite
+LargeReal.isNan
+LargeReal.isNormal
+LargeReal.max
+LargeReal.maxFinite
+LargeReal.min
+LargeReal.minNormalPos
+LargeReal.minPos
+LargeReal.negInf
+LargeReal.nextAfter
+LargeReal.posInf
+LargeReal.realCeil
+LargeReal.realFloor
+LargeReal.realMod
+LargeReal.realRound
+LargeReal.realTrunc
+LargeReal.rem
+LargeReal.round
+LargeReal.sameSign
+LargeReal.scan
+LargeReal.sign
+LargeReal.signBit
+LargeReal.split
+LargeReal.toDecimal
+LargeReal.toInt
+LargeReal.toLarge
+LargeReal.toLargeInt
+LargeReal.toManExp
+LargeReal.toString
+LargeReal.trunc
+LargeReal.unordered
 
 # ---- Math ----
 Math.pi
@@ -553,6 +648,21 @@ Date.fmt
 Date.fromString
 Date.scan
 Date.compare
+Date.Apr
+Date.Aug
+Date.Feb
+Date.Fri
+Date.Jul
+Date.Jun
+Date.Mar
+Date.May
+Date.Nov
+Date.Oct
+Date.Sat
+Date.Sep
+Date.Thu
+Date.Tue
+Date.Wed
 
 # ---- Timer ----
 Timer.startCPUTimer
@@ -742,6 +852,11 @@ BinIO.openOut
 BinIO.openAppend
 BinIO.StreamIO.mkInstream
 BinIO.StreamIO.input1
+BinIO.getOutstream
+BinIO.getPosOut
+BinIO.mkOutstream
+BinIO.setOutstream
+BinIO.setPosOut
 
 # ---- TextPrimIO and BinPrimIO ----
 TextPrimIO.RD
@@ -757,6 +872,9 @@ BinPrimIO.WR
 BinPrimIO.openVector
 BinPrimIO.nullRd
 BinPrimIO.nullWr
+BinPrimIO.augmentReader
+BinPrimIO.augmentWriter
+BinPrimIO.compare
 
 # ---- Byte ----
 Byte.byteToChar
@@ -847,6 +965,18 @@ CharArraySlice.find
 CharArraySlice.exists
 CharArraySlice.all
 CharArraySlice.collate
+CharArray.appi
+CharArray.findi
+CharArray.foldli
+CharArray.foldri
+CharVectorSlice.app
+CharVectorSlice.appi
+CharVectorSlice.findi
+CharVectorSlice.foldl
+CharVectorSlice.foldri
+CharVectorSlice.mapi
+CharArraySlice.findi
+CharArraySlice.subslice
 
 # ---- Word8Vector, Word8Array and their slices ----
 Word8Vector.maxLen
@@ -912,6 +1042,34 @@ Word8ArraySlice.foldr
 Word8ArraySlice.exists
 Word8ArraySlice.all
 Word8ArraySlice.collate
+Word8Vector.app
+Word8Vector.appi
+Word8Vector.findi
+Word8Vector.foldri
+Word8Vector.mapi
+Word8Array.all
+Word8Array.app
+Word8Array.appi
+Word8Array.collate
+Word8Array.exists
+Word8Array.find
+Word8Array.findi
+Word8Array.foldl
+Word8Array.foldli
+Word8Array.foldri
+Word8Array.maxLen
+Word8Array.modifyi
+Word8VectorSlice.app
+Word8VectorSlice.appi
+Word8VectorSlice.base
+Word8VectorSlice.find
+Word8VectorSlice.findi
+Word8VectorSlice.mapi
+Word8ArraySlice.base
+Word8ArraySlice.find
+Word8ArraySlice.findi
+Word8ArraySlice.foldl
+Word8ArraySlice.subslice
 
 # ---- Text ----
 Text.Char

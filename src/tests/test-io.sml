@@ -213,6 +213,54 @@ functor IOTestsFn (C : TEST_CONFIG) =
               A.eqIntList "then nothing" ([], toInts (read 3))
             end),
 
+          Case ("augmentReader and augmentWriter supply the array operations",
+            fn () =>
+              let
+                val v = Word8Vector.fromList
+                          (List.map Word8.fromInt [1, 2, 3])
+                val BinPrimIO.RD { readArr, readVec, ... } =
+                  BinPrimIO.augmentReader (BinPrimIO.openVector v)
+                val BinPrimIO.WR { writeArr, writeVec, ... } =
+                  BinPrimIO.augmentWriter (BinPrimIO.nullWr ())
+              in
+                A.that "readVec survives" (isSome readVec);
+                A.that "readArr is now available" (isSome readArr);
+                A.that "writeVec survives" (isSome writeVec);
+                A.that "writeArr is now available" (isSome writeArr)
+              end),
+
+          Case ("an augmented byte reader reads the same bytes", fn () =>
+            let
+              val v = Word8Vector.fromList (List.map Word8.fromInt [1, 2, 3])
+              val BinPrimIO.RD { readVec, ... } =
+                BinPrimIO.augmentReader (BinPrimIO.openVector v)
+            in
+              A.eqIntList "contents"
+                ([1, 2, 3],
+                 List.map Word8.toInt
+                          (Word8Vector.foldr (op ::) [] (valOf readVec 10)))
+            end),
+
+          Case ("byte positions can be compared", fn () =>
+            let
+              val v = Word8Vector.fromList (List.map Word8.fromInt [1, 2, 3])
+              val BinPrimIO.RD { getPos, readVec, ... } = BinPrimIO.openVector v
+            in
+              case getPos of
+                  NONE => ()   (* positions are optional *)
+                | SOME get =>
+                    let
+                      val start = get ()
+                      val _ = valOf readVec 2
+                      val later = get ()
+                    in
+                      A.eqOrder "a position equals itself"
+                        (EQUAL, BinPrimIO.compare (start, start));
+                      A.eqOrder "reading moves the position forward"
+                        (LESS, BinPrimIO.compare (start, later))
+                    end
+            end),
+
           Case ("nullRd and nullWr exist for bytes too", fn () =>
             let
               val BinPrimIO.RD { readVec, ... } = BinPrimIO.nullRd ()

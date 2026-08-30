@@ -163,6 +163,40 @@ functor BinIOTestsFn (C : TEST_CONFIG) =
                 BinIO.closeIn ins
               end),
 
+          (* The output side of the bridge, built over a null writer so that
+           * no file system is needed. *)
+          Case ("mkOutstream, getOutstream and setOutstream", fn () =>
+            let
+              val functional =
+                BinIO.StreamIO.mkOutstream (BinPrimIO.nullWr (), IO.NO_BUF)
+              val outs = BinIO.mkOutstream functional
+            in
+              A.noRaise "writing through the wrapper"
+                (fn () => BinIO.output (outs, ofInts [1, 2, 3]));
+              A.noRaise "getOutstream" (fn () => BinIO.getOutstream outs);
+              A.noRaise "setOutstream"
+                (fn () => BinIO.setOutstream (outs, BinIO.getOutstream outs));
+              A.noRaise "flushOut" (fn () => BinIO.flushOut outs);
+              BinIO.closeOut outs
+            end),
+
+          (* Output positions are optional; a stream without them says so by
+           * raising Io, exactly as on the text side. *)
+          Case ("getPosOut and setPosOut answer or report that they cannot",
+            fn () =>
+              let
+                val outs =
+                  BinIO.mkOutstream
+                    (BinIO.StreamIO.mkOutstream (BinPrimIO.nullWr (), IO.NO_BUF))
+              in
+                (let val p = BinIO.getPosOut outs
+                 in BinIO.setPosOut (outs, p) end)
+                handle IO.Io _ => ()
+                     | IO.RandomAccessNotSupported => ()
+                     | e => A.fail ("unexpected exception " ^ exnName e);
+                BinIO.closeOut outs
+              end),
+
           (* As for text streams, non-blocking input is optional and the
            * specified way to decline is Io with NonblockingNotSupported. *)
           Case ("canInput answers or reports that it cannot", fn () =>

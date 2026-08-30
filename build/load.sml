@@ -45,6 +45,10 @@ use "src/tests/test-mono-seq.sml";
 use "src/tests/test-os-file-sys.sml";
 use "src/tests/test-large.sml";
 use "src/tests/test-text-io-stream.sml";
+use "src/tests/gen-mono-seq.sml";
+use "src/tests/gen-mono-slice.sml";
+use "src/tests/gen-numeric.sml";
+use "src/tests/test-instances.sml";
 use "src/tests/all-tests.sml";
 use "src/main.sml";
 

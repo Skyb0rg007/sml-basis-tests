@@ -78,8 +78,18 @@ structure Prop =
 
     (* Vacuous truth for conditional laws.  With no shrinking and no discard
      * accounting there is nothing to be gained from a separate "discarded"
-     * outcome; a guarded law that is rarely triggered is a bad law. *)
+     * outcome; a guarded law that is rarely triggered is a bad law.
+     *
+     * Note that this is an ordinary function, so the conclusion is evaluated
+     * whether or not the premise holds.  That is fine when the conclusion is
+     * merely false outside the premise, but wrong when it would *raise* --
+     * guarding `Word.toIntX w` by a width check, for instance.  Use
+     * `impliesBy` there, which defers the conclusion. *)
     fun implies (premise, conclusion) = not premise orelse conclusion
+
+    (* implies with the conclusion deferred, for premises that guard against an
+     * exception rather than against falsehood. *)
+    fun impliesBy (premise, conclusion) = not premise orelse conclusion ()
 
     infix 4 ==>
     fun a ==> b = implies (a, b)

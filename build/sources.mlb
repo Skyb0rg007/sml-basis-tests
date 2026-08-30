@@ -42,6 +42,10 @@ in
   ../src/tests/test-os-file-sys.sml
   ../src/tests/test-large.sml
   ../src/tests/test-text-io-stream.sml
+  ../src/tests/gen-mono-seq.sml
+  ../src/tests/gen-mono-slice.sml
+  ../src/tests/gen-numeric.sml
+  ../src/tests/test-instances.sml
   ../src/tests/all-tests.sml
   ../src/main.sml
   ../build/mlton-main.sml

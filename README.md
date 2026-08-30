@@ -135,21 +135,35 @@ Every structure the Basis Library marks as **required**:
 `TextPrimIO` · `Time` · `Timer` · `Vector` · `VectorSlice` · `Word` · `Word8` ·
 `Word8Array` · `Word8ArraySlice` · `Word8Vector` · `Word8VectorSlice`
 
-975 tests: 614 unit tests and 361 properties. At the default 100 trials, a full
-run evaluates roughly 36,000 generated cases.
+1299 tests at run time, from 1115 in the source: 681 unit tests and 434
+properties, some of which are generic over a signature and instantiated once
+per required instance. At the default 100 trials a full run evaluates roughly
+43,000 generated cases.
+
+Eight of those structures are monomorphic sequences, three are `WORD`
+instances, three are `INTEGER` and two are `REAL`. Testing each by hand would
+be the same file copied fourteen times, so the tests for those are written
+once against the signature (`gen-mono-seq.sml`, `gen-mono-slice.sml`,
+`gen-numeric.sml`) and applied to every instance in `test-instances.sml`. The
+hand-written `Word`, `Int` and `Real` suites remain and go deeper on the
+default types; the generic ones give breadth across all the instances.
 
 ### Checking that nothing was missed
 
 `tools/required-members.txt` lists every value, exception and constructor the
-required part of the Basis specifies — 834 entries. `tools/check-coverage.sh`
-verifies that each one is exercised somewhere in the test sources:
+required part of the Basis specifies — 992 entries, cross-checked against the
+expanded signatures MLton reports for `-show-basis` so the list is not just
+what came to mind. `tools/check-coverage.sh` verifies that each one is
+exercised somewhere in the test sources, resolving both the structure
+abbreviations the tests use and the generic functors' parameters against every
+instance they are applied to:
 
 ```
 $ tools/check-coverage.sh
 NOT CALLABLE IN-PROCESS  OS.Process.exit  (terminates the process, ...)
 NOT CALLABLE IN-PROCESS  OS.Process.terminate  (terminates the process, ...)
 
-checked 832 required members, 0 not mentioned in the test sources
+checked 990 required members, 0 not mentioned in the test sources
 2 further members cannot be called from inside a running test
 ```
 
@@ -172,7 +186,9 @@ at all. Adding them means adding a file and a line to the build description.
 ```
 src/framework/   random, generators, printers, assertions, test tree, runner
 src/config/      TEST_CONFIG, the shipped configurations, and the selection
-src/tests/       one functor over TEST_CONFIG per Basis structure (31 files)
+src/tests/       one functor over TEST_CONFIG per Basis structure (35 files),
+                 including gen-*.sml, generic over a signature and applied to
+                 every required instance
 src/main.sml     command line entry point
 build/           sources.txt and the three build descriptions generated from it
 run/             one script per implementation
@@ -187,26 +203,27 @@ behaviour the test accepts both, or is gated by configuration.
 
 | | passed | failed | errored | skipped |
 | --- | --- | --- | --- | --- |
-| SML/NJ 2026.1 (63-bit int and word) | 952 | 18 | 0 | 5 |
-| MLton 20241230 (32-bit int and word) | 968 | 2 | 0 | 5 |
-| Poly/ML 5.7.1 (63-bit int and word) | 967 | 1 | 2 | 5 |
+| SML/NJ 2026.1 (63-bit int and word) | 1273 | 21 | 0 | 5 |
+| MLton 20241230 (32-bit int and word) | 1292 | 2 | 0 | 5 |
+| Poly/ML 5.7.1 (63-bit int and word) | 1288 | 4 | 2 | 5 |
 
-975 tests in each column. "Errored" means an unexpected exception escaped, as
+1299 tests in each column. "Errored" means an unexpected exception escaped, as
 opposed to an assertion returning false; the two are counted separately so
 that a library raising something surprising is never mistaken for a test
 simply being false. The five skips are the three Windows `OS.Path` tests, the
 hexadecimal real literal test, and the combined-direction poll test described
 below.
 
-**SML/NJ 2026.1** — 18 failures, from nine distinct defects:
+**SML/NJ 2026.1** — 21 failures, from nine distinct defects:
 
 - `String.isSubstring "" ""` is `false`. The empty string is a substring of
   every string; `isSubstring "" "a"` and `isPrefix "" ""` are both `true`.
 - `StringCvt.skipWS` does not skip `\f` or `\v`, although `Char.isSpace`
   reports both as whitespace.
-- `Vector.update` and `CharVector.update` perform no bounds check: index `3`
-  and index `~1` on a three-element vector both return normally instead of
-  raising `Subscript`.
+- `Vector.update`, `CharVector.update` and `Word8Vector.update` perform no
+  bounds check: index `3` and index `~1` on a three-element vector both return
+  normally instead of raising `Subscript`. The array versions are checked
+  correctly, so this is specific to the immutable update.
 - `TextIO.inputAll` and `BinIO.inputAll` raise `Io` on an empty stream. This
   reaches the functional `StreamIO` layer too, which is where most of the
   eighteen failures come from.
@@ -235,7 +252,7 @@ below.
 - `TextIO.endOfStream` stays `false` after `inputAll` has consumed the whole
   stream. Draining the same stream with `input1` sets it correctly.
 
-**Poly/ML 5.7.1** — 3 failures:
+**Poly/ML 5.7.1** — 6 failures:
 
 - `Real.fromString` rejects `"inf"`, `"infinity"` and `"nan"`, which are in the
   Basis grammar and which its own `Real.toString` produces, so the special
@@ -244,6 +261,15 @@ below.
   raising `Path`. `mkAbsolute` rejects it correctly.
 - `Date.fmt ""` raises `Date`. An empty format string should produce an empty
   string, as it does on the other two.
+- `LargeWord.fromInt ~1` yields `7FFFFFFFFFFFFFFF` rather than all ones, even
+  though `LargeWord.wordSize` is 64 and `LargeWord.notb 0w0` and
+  `LargeWord.- (0w0, 0w1)` both correctly give `FFFFFFFFFFFFFFFF`.
+- `Word8.toLargeX` does not sign-extend into the top bit: `0wxFF` becomes
+  `7FFFFFFFFFFFFFFF` instead of `FFFFFFFFFFFFFFFF`. `Word.toLargeX` is
+  correct, so only the narrower source width is affected.
+- `LargeWord.~>> (0w1, 0w64)` yields `1` rather than `0`; shifting a positive
+  value right by the full word width must clear it. `LargeWord.>>` handles the
+  same case correctly.
 - Separately, 5.7.1 cannot compile `Vector.sub` or `Array.sub` applied to a
   constant sequence at a negative constant index. That is worked around by
   `Assert.hide` rather than by dropping the tests.

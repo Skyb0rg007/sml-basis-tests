@@ -37,6 +37,7 @@ functor AllTestsFn (C : TEST_CONFIG) =
     structure T28 = OSFileSysTestsFn (C)
     structure T29 = LargeTestsFn (C)
     structure T30 = TextIOStreamTestsFn (C)
+    structure T31 = InstanceTestsFn (C)
 
     val suite =
       Test.Group ("Standard ML Basis Library",
@@ -46,5 +47,6 @@ functor AllTestsFn (C : TEST_CONFIG) =
         , T16.suite, T17.suite, T18.suite, T19.suite, T20.suite
         , T21.suite, T22.suite, T23.suite, T24.suite, T25.suite
         , T26.suite, T27.suite, T28.suite, T29.suite, T30.suite
+        , T31.suite
         ])
   end
