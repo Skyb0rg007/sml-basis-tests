@@ -59,6 +59,10 @@ jobs:
 
       - name: Install SML/NJ from the openSUSE Build Service
         run: |
+          # Without pipefail a failed key download would still leave an empty
+          # keyring behind, and the step would go wrong two commands later
+          # with a signature error instead of here with a 404.
+          set -o pipefail
           # The repository is laid out per distribution release, so the path
           # follows the runner rather than being pinned alongside it.
           release="xUbuntu_$(lsb_release -rs)"
@@ -66,8 +70,14 @@ jobs:
           sudo install -d -m 0755 /etc/apt/keyrings
           curl -fsSL "https://download.opensuse.org/repositories/home:skyenet:smlnj/${release}/Release.key" \
             | gpg --dearmor | sudo tee "$key" > /dev/null
-          echo "deb [signed-by=$key] https://download.opensuse.org/repositories/home:/skyenet:/smlnj/${release}/ /" \
-            | sudo tee /etc/apt/sources.list.d/home-skyenet-smlnj.sources > /dev/null
+          # A .sources file is deb822: it holds stanzas, and a one-line
+          # "deb ..." entry in one is a parse error, not a source.
+          sudo tee /etc/apt/sources.list.d/home-skyenet-smlnj.sources > /dev/null <<SOURCES
+          Types: deb
+          URIs: https://download.opensuse.org/repositories/home:/skyenet:/smlnj/${release}/
+          Suites: /
+          Signed-By: $key
+          SOURCES
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends smlnj
 
