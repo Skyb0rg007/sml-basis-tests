@@ -54,13 +54,36 @@ same division the configuration draws — what cannot be discovered from inside
 the language is written down once, per implementation. `opt-none.sml` is the
 profile that names none of them, and it is what the portable descriptions use.
 
+**A missing required member is supplied, and declared.** An implementation may
+be missing something the Basis requires. That is a finding, but on a
+whole-program compiler it is a fatal one: the suite does not fail that test, it
+fails to compile, and the thousand tests that have nothing to do with the
+missing member never run either. A build may therefore supply the member from
+`src/compat/`, selected by an `@compat` marker the same way a profile is. What
+it must not do is then report a pass for it. Every substituted member is named
+in `Compat.substituted`, the tests that exercise it are skipped with that as
+the reason, and the run header prints the list — a suite that tests its own
+code and calls the result conformance is worse than one that does not run.
+
+`src/compat/compat-mlkit.sml` is the only one so far. MLKit 4.7.22 has 985 of
+the 992 required members; it lacks `String.scan`, `Real.toDecimal`,
+`Real.fromDecimal`, the `LargeReal` pair of those, and `Timer.checkCPUTimes`
+and `Timer.checkGCTime`. Six are supplied by delegating to what MLKit does
+have — `String.scan` is `Char.scan` applied until it declines, and `toDecimal`
+goes through MLKit's own `Real.fmt` and `IEEEReal.fromString`. The seventh
+cannot be: MLKit exposes no collector times at all, so `checkGCTime` returns
+zero. That one is a stub, not an implementation, which is exactly why the skip
+matters.
+
 **Six build descriptions, one source list.** `build/sources.txt` is the
 dependency order, with an `@optional` marker where the profile's files go.
-`tools/gen-builds.sh` expands it into `build/sources.cm` (CM),
+`tools/gen-builds.sh` expands it, along with the `@compat` marker, into
+`build/sources.cm` (CM),
 `build/sources.mlb` (MLB) and `build/load.sml` (a plain `use` sequence) for the
 portable profile, and into `build/sources-smlnj.cm`, `build/sources-mlton.mlb`
-and `build/load-polyml.sml` for the three implementations with a profile of
-their own. They are generated, so they cannot drift apart.
+`build/load-polyml.sml` and `build/sources-mlkit.mlb` for the four
+implementations with a profile of their own. They are generated, so they
+cannot drift apart.
 
 **Facts are read, not assumed.** `Int.precision`, `Int.maxInt`, `Word.wordSize`,
 `Char.maxOrd`, `Real.precision`, `Real.radix`, `String.maxSize` and
@@ -429,8 +452,13 @@ exists to find defects in the implementations it runs on, and every one of
 them has some, so a red build every time would say nothing. A compiler that
 cannot build the suite does fail it, since then nothing was learned.
 
-**MLKit 4.7.22** is the exception, and is exempt from that gate. It has no
-`String.scan`, which the `STRING` signature requires, so it stops compiling at
-`src/tests/test-string.sml` and never reaches a test. That is itself the
-finding, and the report states it on every run; making it a red build would
-only teach people to ignore the red.
+**MLKit 4.7.22** is the exception, and is exempt from that gate. With
+`src/compat/compat-mlkit.sml` supplying the seven required members it lacks it
+now type-checks the whole suite — every one of the 992 required members
+resolves — but its back end then dies with `Impossible: CompileDec.succeed`
+while compiling the program. That is an internal compiler error, not a missing
+member: it reproduces with `src/main.sml` exactly as committed, does not
+reproduce in any smaller program built out of the same code, and none of
+`-no_opt`, `-no_aopt` or `-no_cross_opt` avoids it. So MLKit still produces no
+binary, for a reason no change to this suite can address. The report states it
+on every run; making it a red build would only teach people to ignore the red.

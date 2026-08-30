@@ -117,11 +117,14 @@ jobs:
               rc=1
             fi
           done
-          # MLKit is deliberately not in that list.  MLKit 4.7.22 has no
-          # String.scan, which the STRING signature requires, so it stops
-          # compiling at src/tests/test-string.sml.  That is a finding about
-          # MLKit, recorded in the report on every run; turning it into a red
-          # build would only train people to ignore the red.
+          # MLKit is deliberately not in that list.  src/compat supplies the
+          # seven required members MLKit 4.7.22 lacks, so it type-checks the
+          # whole suite, but its back end then dies with "Impossible:
+          # CompileDec.succeed" -- an internal compiler error that reproduces
+          # with src/main.sml exactly as committed and that no optimisation
+          # flag avoids.  That is a finding about MLKit, recorded in the
+          # report on every run; turning it into a red build would only train
+          # people to ignore the red.
           if [ "$(cat ci-results/mlkit.status)" = completed ]; then
             echo "::notice::MLKit now builds the suite; it can join the gate above"
           fi
