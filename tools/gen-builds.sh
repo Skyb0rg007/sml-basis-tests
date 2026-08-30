@@ -88,7 +88,9 @@ val () =
       | afterSeparator ("--" :: rest) = rest
       | afterSeparator (_ :: rest) = afterSeparator rest
   in
-    ignore (Main.runWith (afterSeparator (CommandLine.arguments ())))
+    (* Exit with the run's own status, as the other two loaders do.  A script
+     * that always succeeds cannot be used to gate anything. *)
+    OS.Process.exit (Main.runWith (afterSeparator (CommandLine.arguments ())))
   end;
 TAIL
   } > "$out"
