@@ -146,6 +146,56 @@ functor OSPathTestsFn (C : TEST_CONFIG) =
                  (true, Path.validVolume { isAbs = false, vol = "" })))
           ]),
 
+        Group ("canonical form and roots",
+        [ Case ("isCanonical", fn () =>
+            if not isUnix then ()
+            else
+              (A.eqBool "a plain path is canonical" (true, Path.isCanonical "a/b");
+               A.eqBool "a current arc is not"
+                 (false, Path.isCanonical "a/./b");
+               A.eqBool "a trailing separator is not"
+                 (false, Path.isCanonical "a/b/");
+               A.eqBool "the root is canonical" (true, Path.isCanonical "/"))),
+
+          Case ("getParent", fn () =>
+            if not isUnix then ()
+            else
+              (A.eqString "of a nested path" ("/a", Path.getParent "/a/b");
+               A.eqString "of a path just below the root"
+                 ("/", Path.getParent "/a");
+               A.eqString "the root is its own parent" ("/", Path.getParent "/");
+               A.eqString "of a relative path" ("a", Path.getParent "a/b");
+               A.eqString "of a bare name" (".", Path.getParent "a");
+               A.eqString "of the current arc" ("..", Path.getParent "."))),
+
+          Case ("isRoot", fn () =>
+            if not isUnix then ()
+            else
+              (A.eqBool "the root" (true, Path.isRoot "/");
+               A.eqBool "a path below it" (false, Path.isRoot "/a");
+               A.eqBool "a relative path" (false, Path.isRoot "a"))),
+
+          Case ("mkCanonical produces canonical paths", fn () =>
+            List.app
+              (fn p =>
+                 A.eqBool ("mkCanonical " ^ Show.string p ^ " is canonical")
+                   (true, Path.isCanonical (Path.mkCanonical p)))
+              ["a/./b", "a/b/", "a/b/../c", "", "."]),
+
+          (* The Unix-syntax conversions are identities on a Unix host and a
+           * genuine translation elsewhere, so only the round trip is stated
+           * in a host-independent way. *)
+          Case ("fromUnixPath and toUnixPath", fn () =>
+            if isUnix then
+              (A.eqString "fromUnixPath is the identity here"
+                 ("a/b", Path.fromUnixPath "a/b");
+               A.eqString "and so is toUnixPath"
+                 ("a/b", Path.toUnixPath "a/b"))
+            else
+              A.eqString "a Unix path converts and converts back"
+                ("a/b", Path.toUnixPath (Path.fromUnixPath "a/b")))
+        ]),
+
         Group ("errors",
         [ Case ("concat rejects an absolute second argument", fn () =>
             A.raises "absolute" A.isPath
@@ -226,6 +276,21 @@ functor OSPathTestsFn (C : TEST_CONFIG) =
                       in
                         Path.ext joined = SOME e
                       end),
+
+          P.forAll ("getParent of a path with a parent drops the last arc",
+                    G.pair (relPath, arc), Show.pair (showS, showS),
+                    fn (p, a) =>
+                      Path.mkCanonical (Path.getParent (Path.concat (p, a)))
+                      = Path.mkCanonical p),
+
+          P.forAll ("mkCanonical always yields a canonical path", relPath, showS,
+                    fn p => Path.isCanonical (Path.mkCanonical p)),
+
+          P.forAll ("a Unix path survives the round trip", relPath, showS,
+                    fn p => Path.toUnixPath (Path.fromUnixPath p) = p),
+
+          P.forAll ("only the root is a root", relPath, showS,
+                    fn p => P.implies (Path.isRoot p, Path.isAbsolute p)),
 
           P.forAll ("mkCanonical is idempotent", relPath, showS,
                     fn p => Path.mkCanonical (Path.mkCanonical p)

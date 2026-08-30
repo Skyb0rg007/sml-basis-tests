@@ -79,6 +79,10 @@ structure that matches it and pointing `src/config/selected.sml` at it.
 | `hasFileSystem` | Files can be created, read and removed |
 | `scratchDir` | Where the file tests may write |
 | `hasProcessEnv` | `OS.Process.getEnv` returns real answers |
+| `hasSymbolicLinks` | The host has symbolic links, so `isLink`/`readLink` mean something |
+| `canSpawnProcesses` | `OS.Process.system` can run a child process |
+| `hasPollingIO` | `OS.IO.poll` works on descriptors from ordinary files |
+| `canPollBothDirections` | One poll descriptor may carry `pollIn` and `pollOut` together |
 | `timeResolutionNanos` | Granularity of `Time.time`, in nanoseconds |
 
 Three configurations ship: `ConfigUnix` (the default), `ConfigWindows`, and
@@ -120,80 +124,126 @@ may distribute the surrounding call into both arms and fold the constant one.
 
 ## Coverage
 
-`General`, `Option`, `Bool`, `List`, `ListPair`, `Int`, `Word`/`Word8`, `Char`,
-`String`, `Substring`, `StringCvt`, `Vector`, `Array`, `VectorSlice`,
-`ArraySlice`, `Real`, `Math`, `IEEEReal`, `Time`, `OS.Path`, `OS.Process`,
-`Byte`, `Word8Vector`, `Word8Array`, `TextIO`.
+Every structure the Basis Library marks as **required**:
 
-689 tests: 390 unit tests and 299 properties. At the default 100 trials, a
-full run evaluates roughly 30,000 generated cases.
+`Array` · `ArraySlice` · `BinIO` · `BinPrimIO` · `Bool` · `Byte` · `Char` ·
+`CharArray` · `CharArraySlice` · `CharVector` · `CharVectorSlice` ·
+`CommandLine` · `Date` · `General` · `IEEEReal` · `Int` · `IO` · `LargeInt` ·
+`LargeReal` · `LargeWord` · `List` · `ListPair` · `Math` · `Option` · `OS` ·
+`OS.FileSys` · `OS.IO` · `OS.Path` · `OS.Process` · `Position` · `Real` ·
+`String` · `StringCvt` · `Substring` · `Text` · `TextIO` · `TextIO.StreamIO` ·
+`TextPrimIO` · `Time` · `Timer` · `Vector` · `VectorSlice` · `Word` · `Word8` ·
+`Word8Array` · `Word8ArraySlice` · `Word8Vector` · `Word8VectorSlice`
 
-Deliberately not covered: the optional structures listed above, plus `Date`
-and `Timer` (almost entirely environment-dependent), `BinIO`, `IEEEReal`'s
-`decimal_approx` record (its field names differ between Basis revisions), and
-`OS.FileSys` beyond what the `TextIO` file tests need.
+975 tests: 614 unit tests and 361 properties. At the default 100 trials, a full
+run evaluates roughly 36,000 generated cases.
+
+### Checking that nothing was missed
+
+`tools/required-members.txt` lists every value, exception and constructor the
+required part of the Basis specifies — 834 entries. `tools/check-coverage.sh`
+verifies that each one is exercised somewhere in the test sources:
+
+```
+$ tools/check-coverage.sh
+NOT CALLABLE IN-PROCESS  OS.Process.exit  (terminates the process, ...)
+NOT CALLABLE IN-PROCESS  OS.Process.terminate  (terminates the process, ...)
+
+checked 832 required members, 0 not mentioned in the test sources
+2 further members cannot be called from inside a running test
+```
+
+The two exceptions are `OS.Process.exit` and `OS.Process.terminate`: calling
+either ends the run, so they are listed with that reason rather than silently
+skipped.
+
+This is a coverage *floor*, not a proof. It shows that no required member was
+overlooked; it does not claim that every test of every member is a thorough
+one.
+
+**Not covered**, and deliberately so: the optional structures (`IntInf`,
+`Int64`, `Word32`, `Real32`, `Array2`, `Posix`, `Unix`, `Windows`, `Socket`,
+`PackWord*`, `PackReal*`, the `Wide*` family). Naming an absent structure is a
+compile-time error, so a suite that must run everywhere cannot reference them
+at all. Adding them means adding a file and a line to the build description.
 
 ## Layout
 
 ```
 src/framework/   random, generators, printers, assertions, test tree, runner
 src/config/      TEST_CONFIG, the shipped configurations, and the selection
-src/tests/       one functor over TEST_CONFIG per Basis structure
+src/tests/       one functor over TEST_CONFIG per Basis structure (31 files)
 src/main.sml     command line entry point
 build/           sources.txt and the three build descriptions generated from it
 run/             one script per implementation
+tools/           the required-member inventory and the coverage checker
 ```
 
 ## Results on three implementations
 
 Run at the defaults. These are what the suite reports, with the reading of the
 specification that each test encodes; where the Basis genuinely permits either
-behaviour the test is gated by configuration instead.
+behaviour the test accepts both, or is gated by configuration.
 
 | | passed | failed | errored | skipped |
 | --- | --- | --- | --- | --- |
-| SML/NJ 2026.1 (63-bit int and word) | 679 | 6 | 0 | 4 |
-| MLton 20241230 (32-bit int and word) | 683 | 2 | 0 | 4 |
-| Poly/ML 5.7.1 (63-bit int and word) | 683 | 1 | 1 | 4 |
+| SML/NJ 2026.1 (63-bit int and word) | 952 | 18 | 0 | 5 |
+| MLton 20241230 (32-bit int and word) | 968 | 2 | 0 | 5 |
+| Poly/ML 5.7.1 (63-bit int and word) | 967 | 1 | 2 | 5 |
 
-689 tests in each column. "Errored" means an unexpected exception escaped, as
+975 tests in each column. "Errored" means an unexpected exception escaped, as
 opposed to an assertion returning false; the two are counted separately so
 that a library raising something surprising is never mistaken for a test
-simply being false.
+simply being false. The five skips are the three Windows `OS.Path` tests, the
+hexadecimal real literal test, and the combined-direction poll test described
+below.
 
-The four skips in each column are the three Windows `OS.Path` tests and the
-hexadecimal real literal test, none of which apply to a Unix host running a
-conforming implementation.
-
-**SML/NJ 2026.1**
+**SML/NJ 2026.1** — 18 failures, from nine distinct defects:
 
 - `String.isSubstring "" ""` is `false`. The empty string is a substring of
   every string; `isSubstring "" "a"` and `isPrefix "" ""` are both `true`.
 - `StringCvt.skipWS` does not skip `\f` or `\v`, although `Char.isSpace`
   reports both as whitespace.
-- `Vector.update` performs no bounds check: index `3` and index `~1` on a
-  three-element vector both return normally instead of raising `Subscript`.
-- `TextIO.inputAll` raises `Io` on a stream from `TextIO.openString ""`.
+- `Vector.update` and `CharVector.update` perform no bounds check: index `3`
+  and index `~1` on a three-element vector both return normally instead of
+  raising `Subscript`.
+- `TextIO.inputAll` and `BinIO.inputAll` raise `Io` on an empty stream. This
+  reaches the functional `StreamIO` layer too, which is where most of the
+  eighteen failures come from.
+- `Date.fromString` does not skip leading whitespace, though every other
+  scanner in the implementation does.
+- `Date.toTime` followed by `Date.fromTimeUniv` is off by twelve hours for a
+  date carrying an explicit UTC offset, so no date round-trips through a time.
+- `LargeInt.fmt StringCvt.HEX` emits lower-case digits while `Int.fmt`,
+  `Word.fmt`, `LargeWord.fmt` and `Position.fmt` all emit upper case.
+- `OS.IO.poll` **terminates the runtime with a segmentation fault** when a
+  single poll descriptor carries both `pollIn` and `pollOut`. Each direction
+  alone is fine, and so are several separate descriptors in one call. Because
+  a crash takes the rest of the run with it, the combined case is behind
+  `canPollBothDirections`, which defaults to off; the individual directions
+  are tested unconditionally.
 - `Math.pow` has a relative error of about 1e-10 (roughly 184,000 ulps) for
   non-trivial exponents, while `exp` and `ln` are exact. The Basis mandates no
-  accuracy for these, so this is a quality observation rather than a conformance
-  failure — it is what the `pow` law reports at the default 4096-ulp tolerance,
-  and raising `mathToleranceUlps` silences it.
+  accuracy for these, so this is a quality observation rather than a
+  conformance failure — it is what the `pow` law reports at the default
+  4096-ulp tolerance, and raising `mathToleranceUlps` silences it.
 
-**MLton 20241230**
+**MLton 20241230** — 2 failures:
 
 - `Bool.fromString "   true"` is `NONE`; leading whitespace is not skipped,
   though `Int.fromString "   42"` correctly returns `SOME 42`.
 - `TextIO.endOfStream` stays `false` after `inputAll` has consumed the whole
   stream. Draining the same stream with `input1` sets it correctly.
 
-**Poly/ML 5.7.1**
+**Poly/ML 5.7.1** — 3 failures:
 
 - `Real.fromString` rejects `"inf"`, `"infinity"` and `"nan"`, which are in the
   Basis grammar and which its own `Real.toString` produces, so the special
   values do not round-trip.
 - `OS.Path.mkRelative` accepts a relative `relativeTo` argument instead of
   raising `Path`. `mkAbsolute` rejects it correctly.
+- `Date.fmt ""` raises `Date`. An empty format string should produce an empty
+  string, as it does on the other two.
 - Separately, 5.7.1 cannot compile `Vector.sub` or `Array.sub` applied to a
   constant sequence at a negative constant index. That is worked around by
   `Assert.hide` rather than by dropping the tests.

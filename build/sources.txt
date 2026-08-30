@@ -27,5 +27,14 @@ src/tests/test-os-path.sml
 src/tests/test-byte.sml
 src/tests/test-os-process.sml
 src/tests/test-text-io.sml
+src/tests/test-date.sml
+src/tests/test-timer.sml
+src/tests/test-command-line.sml
+src/tests/test-io.sml
+src/tests/test-bin-io.sml
+src/tests/test-mono-seq.sml
+src/tests/test-os-file-sys.sml
+src/tests/test-large.sml
+src/tests/test-text-io-stream.sml
 src/tests/all-tests.sml
 src/main.sml

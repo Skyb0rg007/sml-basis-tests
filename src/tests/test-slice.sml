@@ -102,6 +102,23 @@ functor SliceTestsFn (C : TEST_CONFIG) =
               A.eqBool "all" (false, VS.all (fn x => x > 2) s)
             end),
 
+          Case ("app, appi, mapi and findi see only the window", fn () =>
+            let
+              val s = VS.slice (Vector.fromList [1, 2, 3, 4, 5], 1, SOME 3)
+              val seen = ref []
+            in
+              VS.app (fn x => seen := x :: !seen) s;
+              A.eqIntList "app" ([4, 3, 2], !seen);
+              seen := [];
+              VS.appi (fn (i, x) => seen := (i * 100 + x) :: !seen) s;
+              A.eqIntList "appi indices restart at zero" ([204, 103, 2], !seen);
+              A.eqIntList "mapi" ([0, 3, 8],
+                vlist (VS.mapi (fn (i, x) => i * x) s));
+              A.eqBy (op =, Show.option (Show.pair (Show.int, Show.int)))
+                "findi returns the index within the slice"
+                (SOME (1, 3), VS.findi (fn (_, x) => x > 2) s)
+            end),
+
           Case ("concat", fn () =>
             A.eqIntList "joined"
               ([2, 3, 5],
@@ -193,6 +210,30 @@ functor SliceTestsFn (C : TEST_CONFIG) =
               AS.copyVec {src = VS.slice (Vector.fromList [1, 2, 3], 1, SOME 2),
                           dst = dst, di = 1};
               A.eqIntList "copied" ([0, 2, 3, 0], alist dst)
+            end),
+
+          Case ("subslice narrows an array slice", fn () =>
+            let
+              val a = Array.fromList [1, 2, 3, 4, 5]
+              val s = AS.slice (a, 1, SOME 3)          (* 2 3 4 *)
+              val t = AS.subslice (s, 1, SOME 2)       (* 3 4 *)
+            in
+              A.eqIntList "contents" ([3, 4], vlist (AS.vector t));
+              A.eqBy (op =, Show.triple (Show.array Show.int, Show.int, Show.int))
+                "base offsets are absolute" ((a, 2, 2), AS.base t);
+              A.raises "outside the parent slice" A.isSubscript
+                (fn () => AS.subslice (s, 1, SOME (A.hide 3)))
+            end),
+
+          Case ("appi, mapi and findi on an array slice", fn () =>
+            let
+              val s = AS.slice (Array.fromList [1, 2, 3, 4, 5], 1, SOME 3)
+              val seen = ref []
+            in
+              AS.appi (fn (i, x) => seen := (i * 100 + x) :: !seen) s;
+              A.eqIntList "appi indices restart at zero" ([204, 103, 2], !seen);
+              A.eqBy (op =, Show.option (Show.pair (Show.int, Show.int)))
+                "findi" (SOME (1, 3), AS.findi (fn (_, x) => x > 2) s)
             end),
 
           Case ("getItem and traversal", fn () =>

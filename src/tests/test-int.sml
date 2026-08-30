@@ -245,6 +245,13 @@ functor IntTestsFn (C : TEST_CONFIG) =
              A.eqInt "negative" (~42, Int.fromLarge (Int.toLarge ~42));
              A.eqInt "zero" (0, Int.fromLarge (Int.toLarge 0)))),
 
+          (* INTEGER requires toInt and fromInt even for Int itself, where
+           * they are the identity. *)
+          Case ("toInt and fromInt are the identity on Int", fn () =>
+            (A.eqInt "toInt" (42, Int.toInt 42);
+             A.eqInt "fromInt" (42, Int.fromInt 42);
+             A.eqInt "a negative value" (~42, Int.toInt (Int.fromInt ~42)))),
+
           Case ("the bounds survive the round trip", fn () =>
             if not fixed then ()
             else

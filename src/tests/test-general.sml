@@ -50,6 +50,31 @@ functor GeneralTestsFn (C : TEST_CONFIG) =
           A.raises "Fail" (fn Fail s => s = "boom" | _ => false)
                    (fn () => raise Fail "boom")),
 
+        (* Bind and Match are raised by the language, not by any library
+         * function: a failing val binding and a non-exhaustive match. *)
+        Case ("Bind is raised by a failing pattern binding", fn () =>
+          A.raises "binding a cons pattern to nil"
+            (fn Bind => true | _ => false)
+            (fn () => let val x :: _ = A.hideVal ([] : int list) in x end)),
+
+        Case ("Match is raised when no case alternative applies", fn () =>
+          A.raises "no matching alternative"
+            (fn Match => true | _ => false)
+            (fn () =>
+               let
+                 fun onlyZero 0 = 0
+               in
+                 onlyZero (A.hide 1)
+               end)),
+
+        Case ("the General exceptions all exist and are named", fn () =>
+          A.eqStringList "the specified names"
+            (["Bind", "Chr", "Div", "Domain", "Fail", "Match", "Overflow",
+              "Size", "Span", "Subscript"],
+             List.map exnName
+               [Bind, Chr, Div, Domain, Fail "x", Match, Overflow,
+                Size, Span, Subscript])),
+
         Case ("order is a three-element type", fn () =>
           (A.eqOrder "LESS" (LESS, Int.compare (1, 2));
            A.eqOrder "EQUAL" (EQUAL, Int.compare (2, 2));

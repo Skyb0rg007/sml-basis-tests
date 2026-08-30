@@ -79,6 +79,25 @@ signature TEST_CONFIG =
     (* OS.Process.getEnv returns real answers. *)
     val hasProcessEnv : bool
 
+    (* The host has symbolic links, so OS.FileSys.isLink and readLink mean
+     * something.  Nothing in the required Basis can create one, so the tests
+     * only inspect links the suite finds. *)
+    val hasSymbolicLinks : bool
+
+    (* OS.Process.system can run a child process.  Sandboxes and hosted
+     * implementations frequently cannot. *)
+    val canSpawnProcesses : bool
+
+    (* OS.IO.poll works on descriptors obtained from ordinary files. *)
+    val hasPollingIO : bool
+
+    (* A single poll descriptor may carry both pollIn and pollOut.  This is
+     * separate from hasPollingIO because SML/NJ 2026.1 does not merely refuse
+     * the combination -- it terminates the runtime with a segmentation fault,
+     * which would take the rest of the run down with it.  The default is
+     * therefore off, and the individual directions are tested regardless. *)
+    val canPollBothDirections : bool
+
     (* --- time -------------------------------------------------------- *)
 
     (* The granularity of Time.time, in nanoseconds.  The Basis fixes the
@@ -109,6 +128,10 @@ structure ConfigUnix : TEST_CONFIG =
     val hasFileSystem = true
     val scratchDir = "scratch"
     val hasProcessEnv = true
+    val hasSymbolicLinks = true
+    val canSpawnProcesses = true
+    val hasPollingIO = true
+    val canPollBothDirections = false
 
     val timeResolutionNanos = 1000
   end
@@ -134,4 +157,8 @@ structure ConfigMinimal : TEST_CONFIG =
     val realFromStringAcceptsHex = false
     val hasFileSystem = false
     val hasProcessEnv = false
+    val hasSymbolicLinks = false
+    val canSpawnProcesses = false
+    val hasPollingIO = false
+    val canPollBothDirections = false
   end

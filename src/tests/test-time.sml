@@ -110,6 +110,27 @@ functor TimeTestsFn (C : TEST_CONFIG) =
               end)
         ]),
 
+        Group ("scanning",
+        [ Case ("scan reads a time and leaves the rest", fn () =>
+            case Time.scan Substring.getc (Substring.full "1.500 tail") of
+                NONE => A.fail "scan returned NONE"
+              | SOME (t, rest) =>
+                  (eqT "value" (ms 1500, t);
+                   A.eqString "remainder" (" tail", Substring.string rest))),
+
+          Case ("scan skips leading whitespace", fn () =>
+            case Time.scan Substring.getc (Substring.full "   2.000") of
+                NONE => A.fail "scan returned NONE"
+              | SOME (t, _) => eqT "value" (secs 2, t)),
+
+          Case ("scan rejects what is not a time", fn () =>
+            A.that "letters"
+              (not (isSome (Time.scan Substring.getc (Substring.full "abc"))))),
+
+          Case ("the Time exception exists", fn () =>
+            A.eqString "name" ("Time", exnName Time.Time))
+        ]),
+
         Group ("the clock",
         [ Case ("now is monotone across two readings", fn () =>
             let

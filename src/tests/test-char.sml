@@ -197,6 +197,25 @@ functor CharTestsFn (C : TEST_CONFIG) =
              eqCharOpt "lone backslash" (NONE, Char.fromString "\\");
              eqCharOpt "unknown escape" (NONE, Char.fromString "\\q"))),
 
+          (* Char.scan reads one character in SML source syntax, so unlike the
+           * numeric scanners it does not skip leading whitespace: a space is
+           * itself a character literal. *)
+          Case ("scan reads one character and stops", fn () =>
+            (case Char.scan Substring.getc (Substring.full "abc") of
+                 NONE => A.fail "scan returned NONE"
+               | SOME (c, rest) =>
+                   (A.eqChar "the character" (#"a", c);
+                    A.eqString "the remainder" ("bc", Substring.string rest));
+             case Char.scan Substring.getc (Substring.full "\\nrest") of
+                 NONE => A.fail "scan of an escape returned NONE"
+               | SOME (c, rest) =>
+                   (A.eqChar "the escape" (#"\n", c);
+                    A.eqString "the remainder" ("rest", Substring.string rest)))),
+
+          Case ("scan rejects what is not a character", fn () =>
+            A.that "an empty source"
+              (not (isSome (Char.scan Substring.getc (Substring.full ""))))),
+
           Case ("toCString uses C escapes", fn () =>
             (A.eqString "newline" ("\\n", Char.toCString #"\n");
              A.eqString "backslash" ("\\\\", Char.toCString #"\\");

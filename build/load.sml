@@ -36,6 +36,15 @@ use "src/tests/test-os-path.sml";
 use "src/tests/test-byte.sml";
 use "src/tests/test-os-process.sml";
 use "src/tests/test-text-io.sml";
+use "src/tests/test-date.sml";
+use "src/tests/test-timer.sml";
+use "src/tests/test-command-line.sml";
+use "src/tests/test-io.sml";
+use "src/tests/test-bin-io.sml";
+use "src/tests/test-mono-seq.sml";
+use "src/tests/test-os-file-sys.sml";
+use "src/tests/test-large.sml";
+use "src/tests/test-text-io-stream.sml";
 use "src/tests/all-tests.sml";
 use "src/main.sml";
 

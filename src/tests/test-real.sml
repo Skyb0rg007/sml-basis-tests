@@ -389,6 +389,135 @@ functor RealTestsFn (C : TEST_CONFIG) =
               end)
           ]),
 
+        Group ("fused arithmetic and sign",
+        [ (* *+ and *- are the fused multiply-add operations: a*b+c and
+           * a*b-c, computed as a single operation. *)
+          Case ("multiply-add", fn () =>
+            (A.eqRealExact "2*3+4" (10.0, Real.*+ (2.0, 3.0, 4.0));
+             A.eqRealExact "with a negative addend"
+               (2.0, Real.*+ (2.0, 3.0, ~4.0));
+             A.eqRealExact "adding zero" (6.0, Real.*+ (2.0, 3.0, 0.0)))),
+
+          Case ("multiply-subtract", fn () =>
+            (A.eqRealExact "2*3-4" (2.0, Real.*- (2.0, 3.0, 4.0));
+             A.eqRealExact "subtracting zero" (6.0, Real.*- (2.0, 3.0, 0.0)))),
+
+          Case ("sign classifies", fn () =>
+            (A.eqInt "positive" (1, Real.sign 2.5);
+             A.eqInt "negative" (~1, Real.sign ~2.5);
+             A.eqInt "zero" (0, Real.sign 0.0))),
+
+          Case ("sign of a negative zero is still zero",
+            fn () =>
+              if not (ieee andalso C.hasSignedZero) then ()
+              else A.eqInt "negative zero" (0, Real.sign (negZero ()))),
+
+          (* Unlike signBit, sign has no answer for a NaN. *)
+          Case ("sign of a nan is a Domain error",
+            fn () =>
+              if not ieee then ()
+              else A.raises "sign nan" A.isDomain (fn () => Real.sign (nan ())))
+        ]),
+
+        Group ("scanning",
+        [ Case ("scan reads a real and leaves the rest", fn () =>
+            case Real.scan Substring.getc (Substring.full "1.5 tail") of
+                NONE => A.fail "scan returned NONE"
+              | SOME (r, rest) =>
+                  (A.eqRealExact "value" (1.5, r);
+                   A.eqString "remainder" (" tail", Substring.string rest))),
+
+          Case ("scan skips leading whitespace", fn () =>
+            case Real.scan Substring.getc (Substring.full "   2.5") of
+                NONE => A.fail "scan returned NONE"
+              | SOME (r, _) => A.eqRealExact "value" (2.5, r)),
+
+          Case ("scan reads an exponent", fn () =>
+            case Real.scan Substring.getc (Substring.full "1e3") of
+                NONE => A.fail "scan returned NONE"
+              | SOME (r, _) => A.eqRealExact "value" (1000.0, r)),
+
+          Case ("scan rejects what is not a real", fn () =>
+            A.that "letters"
+              (not (isSome (Real.scan Substring.getc (Substring.full "abc"))))),
+
+          Case ("fmt in general notation", fn () =>
+            (A.eqString "three significant digits"
+               ("3.14", Real.fmt (StringCvt.GEN (SOME 3)) 3.14159);
+             A.raises "a negative digit count" A.isSize
+               (fn () => Real.fmt (StringCvt.GEN (SOME ~1)) 1.0)))
+        ]),
+
+        Group ("decimal approximations",
+        [ (* toDecimal reports the value as 0.d1d2...dn times 10^exp. *)
+          Case ("toDecimal decomposes a value", fn () =>
+            let
+              val d = Real.toDecimal 1.5
+            in
+              eqCls "class" (IEEEReal.NORMAL, #class d);
+              A.eqBool "sign" (false, #sign d);
+              A.eqIntList "digits" ([1, 5], #digits d);
+              A.eqInt "exponent" (1, #exp d)
+            end),
+
+          Case ("a negative value sets the sign and keeps the digits", fn () =>
+            let
+              val d = Real.toDecimal ~12.25
+            in
+              A.eqBool "sign" (true, #sign d);
+              A.eqIntList "digits" ([1, 2, 2, 5], #digits d);
+              A.eqInt "exponent" (2, #exp d)
+            end),
+
+          Case ("zero has no digits", fn () =>
+            let
+              val d = Real.toDecimal 0.0
+            in
+              eqCls "class" (IEEEReal.ZERO, #class d);
+              A.eqIntList "digits" ([], #digits d)
+            end),
+
+          Case ("trailing zeroes are not kept", fn () =>
+            let
+              val d = Real.toDecimal 100.0
+            in
+              A.eqIntList "one digit" ([1], #digits d);
+              A.eqInt "and the exponent carries the magnitude" (3, #exp d)
+            end),
+
+          Case ("fromDecimal inverts toDecimal", fn () =>
+            (case Real.fromDecimal (Real.toDecimal 1.5) of
+                 NONE => A.fail "fromDecimal returned NONE"
+               | SOME r => A.eqRealExact "value" (1.5, r);
+             case Real.fromDecimal (Real.toDecimal ~12.25) of
+                 NONE => A.fail "fromDecimal returned NONE"
+               | SOME r => A.eqRealExact "negative value" (~12.25, r))),
+
+          Case ("IEEEReal.toString writes the decimal form", fn () =>
+            (A.eqString "one and a half"
+               ("0.15E1", IEEEReal.toString (Real.toDecimal 1.5));
+             A.eqString "a negative value"
+               ("~0.1225E2", IEEEReal.toString (Real.toDecimal ~12.25)))),
+
+          Case ("IEEEReal.fromString reads it back", fn () =>
+            case IEEEReal.fromString "0.15E1" of
+                NONE => A.fail "fromString returned NONE"
+              | SOME d =>
+                  (A.eqBool "sign" (false, #sign d);
+                   A.eqIntList "digits" ([1, 5], #digits d);
+                   A.eqInt "exponent" (1, #exp d))),
+
+          Case ("IEEEReal.scan leaves the rest of the stream", fn () =>
+            case IEEEReal.scan Substring.getc (Substring.full "0.15E1 tail") of
+                NONE => A.fail "scan returned NONE"
+              | SOME (d, rest) =>
+                  (A.eqIntList "digits" ([1, 5], #digits d);
+                   A.eqString "remainder" (" tail", Substring.string rest))),
+
+          Case ("IEEEReal.fromString rejects what is not a number", fn () =>
+            A.that "letters" (not (isSome (IEEEReal.fromString "abc"))))
+        ]),
+
         Group ("conversion to and from integers",
         [ Case ("fromInt", fn () =>
             (A.eqRealExact "positive" (3.0, Real.fromInt 3);
@@ -525,6 +654,76 @@ functor RealTestsFn (C : TEST_CONFIG) =
                                        Real.== (x, y)
                                        orelse Real.abs (x - y)
                                               <= 1.0e~9 * Real.max (Real.abs x, 1.0))),
+
+          P.forAll ("multiply-add agrees with multiplying then adding",
+                    G.triple (reals, reals, reals),
+                    Show.triple (showR, showR, showR),
+                    fn (a, b, c) =>
+                      P.implies (Real.isFinite a andalso Real.isFinite b
+                                 andalso Real.isFinite c
+                                 andalso Real.isFinite (a * b + c),
+                                 (* The fused form may be more accurate, so
+                                  * equality is not required -- only that the
+                                  * two agree to within a rounding step. *)
+                                 let
+                                   val fused = Real.*+ (a, b, c)
+                                   val plain = a * b + c
+                                 in
+                                   Real.== (fused, plain)
+                                   orelse Real.abs (fused - plain)
+                                          <= 1.0e~9 * Real.max (Real.abs plain, 1.0)
+                                 end)),
+
+          P.forAll ("multiply-subtract is multiply-add with a negated addend",
+                    G.triple (reals, reals, reals),
+                    Show.triple (showR, showR, showR),
+                    fn (a, b, c) =>
+                      P.implies (Real.isFinite a andalso Real.isFinite b
+                                 andalso Real.isFinite c
+                                 andalso Real.isFinite (a * b - c),
+                                 Real.== (Real.*- (a, b, c), Real.*+ (a, b, ~c)))),
+
+          P.forAll ("sign agrees with comparison against zero", reals, showR,
+                    fn x =>
+                      P.implies (Real.isFinite x,
+                                 case Real.sign x of
+                                     0 => Real.== (x, 0.0)
+                                   | 1 => x > 0.0
+                                   | ~1 => x < 0.0
+                                   | _ => false)),
+
+          P.forAll ("scan inverts the exact format", reals, showR,
+                    fn x =>
+                      P.implies (Real.isFinite x,
+                                 case Real.scan Substring.getc
+                                        (Substring.full
+                                           (Real.fmt StringCvt.EXACT x)) of
+                                     NONE => false
+                                   | SOME (y, _) => Real.== (x, y))),
+
+          P.forAll ("fromDecimal inverts toDecimal", reals, showR,
+                    fn x =>
+                      P.implies (Real.isFinite x,
+                                 case Real.fromDecimal (Real.toDecimal x) of
+                                     NONE => false
+                                   | SOME y => Real.== (x, y))),
+
+          P.forAll ("the decimal digits are digits", reals, showR,
+                    fn x =>
+                      P.implies (Real.isFinite x,
+                                 List.all (fn d => d >= 0 andalso d <= 9)
+                                          (#digits (Real.toDecimal x)))),
+
+          P.forAll ("IEEEReal round trips the decimal form", reals, showR,
+                    fn x =>
+                      P.implies (Real.isFinite x,
+                                 case IEEEReal.fromString
+                                        (IEEEReal.toString (Real.toDecimal x)) of
+                                     NONE => false
+                                   | SOME d =>
+                                       (case Real.fromDecimal d of
+                                            NONE => false
+                                          | SOME y => Real.== (x, y)))),
 
           P.forAll ("fromInt agrees with the integer ordering",
                     G.pair (G.smallInt, G.smallInt),
