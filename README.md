@@ -14,7 +14,15 @@ a path separator, or a floating point tolerance.
 run/smlnj.sh          # SML/NJ, via CM and ml-build
 run/mlton.sh          # MLton, via the MLB file
 run/polyml.sh         # Poly/ML, via the sequential loader
-run/mlkit.sh          # MLKit, reads the same MLB file as MLton
+run/mlkit.sh          # MLKit, reads the portable MLB file
+```
+
+The first three build a description that includes the optional structures
+that implementation provides. Pass `--core` as the first argument to build the
+portable description instead, the one that names no optional structure at all:
+
+```sh
+run/mlton.sh --core --only Word
 ```
 
 Each script accepts the suite's own options:
@@ -32,16 +40,27 @@ The process exits non-zero if anything failed, so it drops straight into CI.
 
 ## What makes it portable
 
-**Nothing outside the required Basis.** No `SMLofNJ.*`, no `MLton.*`, no
-compiler-specific library. Structures the Basis marks optional (`IntInf`,
-`Int64`, `Real32`, `Posix`, `Unix`, `PackWord*`) are not referenced at all,
-since naming an absent structure is a compile-time error rather than something
-a run-time flag could skip.
+**Nothing outside the required Basis, in the portable core.** No `SMLofNJ.*`,
+no `MLton.*`, no compiler-specific library. Every file under `src/tests/`
+names only structures the Basis requires, so it compiles anywhere.
 
-**Three build descriptions, one source list.** `build/sources.txt` is the
-dependency order; `build/sources.cm` (CM), `build/sources.mlb` (MLB) and
-`build/load.sml` (a plain `use` sequence) are generated from it, so they cannot
-drift apart.
+**Optional structures are declared, not detected.** Naming an absent structure
+is a compile-time error rather than something a run-time flag could skip, so
+`IntInf`, `Int32`, `PackWord32Big` and the rest cannot appear in a file that
+must compile everywhere. They live under `src/optional/` instead, and which of
+them a build names is a *profile*: `build/optional/mlton.txt` lists the files,
+`src/optional/opt-mlton.sml` applies them to the configuration. This is the
+same division the configuration draws — what cannot be discovered from inside
+the language is written down once, per implementation. `opt-none.sml` is the
+profile that names none of them, and it is what the portable descriptions use.
+
+**Six build descriptions, one source list.** `build/sources.txt` is the
+dependency order, with an `@optional` marker where the profile's files go.
+`tools/gen-builds.sh` expands it into `build/sources.cm` (CM),
+`build/sources.mlb` (MLB) and `build/load.sml` (a plain `use` sequence) for the
+portable profile, and into `build/sources-smlnj.cm`, `build/sources-mlton.mlb`
+and `build/load-polyml.sml` for the three implementations with a profile of
+their own. They are generated, so they cannot drift apart.
 
 **Facts are read, not assumed.** `Int.precision`, `Int.maxInt`, `Word.wordSize`,
 `Char.maxOrd`, `Real.precision`, `Real.radix`, `String.maxSize` and
@@ -137,8 +156,10 @@ Every structure the Basis Library marks as **required**:
 
 1299 tests at run time, from 1115 in the source: 681 unit tests and 434
 properties, some of which are generic over a signature and instantiated once
-per required instance. At the default 100 trials a full run evaluates roughly
-43,000 generated cases.
+per required instance — 536 properties actually run. At the default 100 trials
+that is about 54,000 generated cases. The optional structures below add 111
+more tests in the source and, on MLton's profile, 583 at run time and another
+29,000 generated cases.
 
 Eight of those structures are monomorphic sequences, three are `WORD`
 instances, three are `INTEGER` and two are `REAL`. Testing each by hand would
@@ -163,9 +184,19 @@ $ tools/check-coverage.sh
 NOT CALLABLE IN-PROCESS  OS.Process.exit  (terminates the process, ...)
 NOT CALLABLE IN-PROCESS  OS.Process.terminate  (terminates the process, ...)
 
-checked 990 required members, 0 not mentioned in the test sources
+checked 990 required members and 113 members of the
+optional structures' own signatures, 0 not mentioned in the test sources
 2 further members cannot be called from inside a running test
 ```
+
+`tools/optional-members.txt` holds that second list. It covers only the
+surface the optional structures *add* — the part of `INT_INF` that `INTEGER`
+does not describe, and `PACK_WORD`, `PACK_REAL` and `ARRAY2`, which no
+required structure implements. `Int32.quot` is not listed beside `Int.quot`,
+because both are checked against the same line of the same generic file and
+listing it twice would say nothing new. The checker reads the instance lists
+out of `src/optional/opt-*.sml`, so adding a structure to a profile brings it
+into the coverage check with it.
 
 The two exceptions are `OS.Process.exit` and `OS.Process.terminate`: calling
 either ends the run, so they are listed with that reason rather than silently
@@ -175,24 +206,75 @@ This is a coverage *floor*, not a proof. It shows that no required member was
 overlooked; it does not claim that every test of every member is a thorough
 one.
 
-**Not covered**, and deliberately so: the optional structures (`IntInf`,
-`Int64`, `Word32`, `Real32`, `Array2`, `Posix`, `Unix`, `Windows`, `Socket`,
-`PackWord*`, `PackReal*`, the `Wide*` family). Naming an absent structure is a
-compile-time error, so a suite that must run everywhere cannot reference them
-at all. Adding them means adding a file and a line to the build description.
+### Optional structures
+
+The Basis marks a second group of structures optional. They are not part of
+the portable core for the reason given above — naming one that is absent is a
+compile-time error — but the widely provided ones are covered by a profile
+per implementation:
+
+`IntInf` · `Int32` · `Int64` · `FixedInt` · `Word32` · `Word64` · `SysWord` ·
+`Real32` · `Real64` · `PackWord16Big` · `PackWord16Little` · `PackWord32Big` ·
+`PackWord32Little` · `PackWord64Big` · `PackWord64Little` · `PackRealBig` ·
+`PackRealLittle` · `PackReal32Big` · `PackReal32Little` · `PackReal64Big` ·
+`PackReal64Little` · `Array2` · `IntVector` · `IntArray` · `IntVectorSlice` ·
+`IntArraySlice` · `RealVector` · `RealArray` · `RealVectorSlice` ·
+`RealArraySlice`
+
+No implementation provides all of them — Poly/ML has no `Int64` or `Real32`,
+SML/NJ no `IntVector` — so each profile names what its own has, which is why
+the three columns in the results table below hold different numbers of tests.
+
+Most of these are further instances of signatures the suite already tests
+generically, so they cost a line each: `Int32` and `Int64` go through
+`IntegerInstanceTestsFn`, `Word32` and `Word64` through
+`WordInstanceTestsFn`, `Real32` through `RealInstanceTestsFn`, and the int and
+real sequences through the same `MonoVectorTestsFn` and friends the required
+`Char` and `Word8` sequences use. What needed writing is the surface they add:
+
+- `src/optional/test-int-inf.sml` — the part of `INT_INF` that `INTEGER` does
+  not describe. Unboundedness itself, `divMod`, `quotRem`, `log2`, `pow`
+  including the five cases the specification fixes at a negative exponent, and
+  the bitwise operations, which work on the *infinite* two's complement
+  representation and so are not a fixed-width word's: `andb (~2, 3)` is `2`
+  and `notb i` is `~(i+1)`, at any magnitude.
+- `src/optional/gen-pack-word.sml` — generic over `PACK_WORD`, applied to all
+  six `PackWordNBig`/`PackWordNLittle` structures. The element width is read
+  from `bytesPerElem`, so the same body tests a two-byte and an eight-byte
+  element; what the instantiation declares is the byte order the structure's
+  name promises, since `isBigEndian` is exactly what a byte-order bug gets
+  wrong.
+- `src/optional/gen-pack-real.sml` — generic over `PACK_REAL`, applied to the
+  big-endian and little-endian structures *together*. One structure alone
+  cannot be asked whether it got the byte order right without assuming a
+  particular float format; the pair can, because whatever the format, the two
+  must lay the same value down in opposite orders.
+- `src/optional/test-array2.sml` — `ARRAY2`. Mostly about the two things that
+  distinguish it from `Array`: the traversal argument, whose effect is
+  observable through `fold` over a non-commutative operator, and the region,
+  where `NONE` means "to the edge" and `SOME 0` means "nothing at all".
+
+**Still not covered**, and deliberately so: `Posix`, `Unix`, `Windows`,
+`Socket`, `NetHostDB` and the rest of the system interface, `BoolVector` and
+`BoolArray`, `MONO_ARRAY2`, and the `Wide*` family. Adding one means a file
+under `src/optional/`, a line in `build/optional/<impl>.txt` and a line in
+`src/optional/opt-<impl>.sml`.
 
 ## Layout
 
 ```
 src/framework/   random, generators, printers, assertions, test tree, runner
 src/config/      TEST_CONFIG, the shipped configurations, and the selection
-src/tests/       one functor over TEST_CONFIG per Basis structure (35 files),
-                 including gen-*.sml, generic over a signature and applied to
-                 every required instance
+src/tests/       one functor over TEST_CONFIG per required Basis structure
+                 (35 files), including gen-*.sml, generic over a signature and
+                 applied to every required instance
+src/optional/    tests for the optional structures, and one opt-*.sml profile
+                 per implementation saying which of them that build names
 src/main.sml     command line entry point
-build/           sources.txt and the three build descriptions generated from it
+build/           sources.txt, optional/<impl>.txt, and the six build
+                 descriptions generated from them
 run/             one script per implementation
-tools/           the required-member inventory and the coverage checker
+tools/           gen-builds.sh, the member inventories, and the coverage checker
 ```
 
 ## Results on three implementations
@@ -201,20 +283,26 @@ Run at the defaults. These are what the suite reports, with the reading of the
 specification that each test encodes; where the Basis genuinely permits either
 behaviour the test accepts both, or is gated by configuration.
 
-| | passed | failed | errored | skipped |
-| --- | --- | --- | --- | --- |
-| SML/NJ 2026.1 (63-bit int and word) | 1273 | 21 | 0 | 5 |
-| MLton 20241230 (32-bit int and word) | 1292 | 2 | 0 | 5 |
-| Poly/ML 5.7.1 (63-bit int and word) | 1288 | 4 | 2 | 5 |
+| | tests | passed | failed | errored | skipped |
+| --- | --- | --- | --- | --- | --- |
+| SML/NJ 2026.1 (63-bit int and word) | 1756 | 1724 | 27 | 0 | 5 |
+| MLton 20241230 (32-bit int and word) | 1882 | 1875 | 2 | 0 | 5 |
+| Poly/ML 5.7.1 (63-bit int and word) | 1731 | 1714 | 8 | 4 | 5 |
 
-1299 tests in each column. "Errored" means an unexpected exception escaped, as
-opposed to an assertion returning false; the two are counted separately so
-that a library raising something surprising is never mistaken for a test
-simply being false. The five skips are the three Windows `OS.Path` tests, the
-hexadecimal real literal test, and the combined-direction poll test described
-below.
+The required part is 1299 tests in every column. The columns differ because
+each implementation's profile names a different set of optional structures:
+583 further tests on MLton, 457 on SML/NJ, 432 on Poly/ML. Running any of the
+three with `--core` gives the same 1299 everywhere, plus one skip standing for
+the optional group that build does not have.
 
-**SML/NJ 2026.1** — 21 failures, from nine distinct defects:
+"Errored" means an unexpected exception escaped, as opposed to an assertion
+returning false; the two are counted separately so that a library raising
+something surprising is never mistaken for a test simply being false. The five
+skips are the three Windows `OS.Path` tests, the hexadecimal real literal
+test, and the combined-direction poll test described below.
+
+**SML/NJ 2026.1** — 21 failures in the required part, from nine distinct
+defects:
 
 - `String.isSubstring "" ""` is `false`. The empty string is a substring of
   every string; `isSubstring "" "a"` and `isPrefix "" ""` are both `true`.
@@ -245,14 +333,35 @@ below.
   conformance failure — it is what the `pow` law reports at the default
   4096-ulp tolerance, and raising `mathToleranceUlps` silences it.
 
-**MLton 20241230** — 2 failures:
+and 6 more in the optional structures, from four:
+
+- `IntInf.pow (1, ~5)` is `0`. The specification fixes `pow` at a negative
+  exponent by cases: a zero base raises `Div`, a base of absolute value one
+  gives `i^j` — so `1` for `1`, and `1` or `~1` by parity for `~1` — and only
+  a base larger than one truncates to `0`. SML/NJ takes the last case for all
+  of them.
+- `IntInf.fmt StringCvt.HEX` emits lower-case digits. `IntInf` and `LargeInt`
+  are the same structure here, so this is the `LargeInt` defect above showing
+  up a second time.
+- `Array2.array (0, 3, init)` has dimensions `(0, 0)`: a zero in one dimension
+  erases the other, although `array (r, c, init)` is specified to build an
+  `r` by `c` array. MLton reports `(0, 3)`.
+- An `Array2` region with `nrows = SOME 0` is traversed to the edge of the
+  array as though the extent had been `NONE`, so an empty region is not empty.
+  `SOME 0` and `NONE` are different requests. This accounts for two of the
+  six, the unit test and the property.
+- `RealVector.update` performs no bounds check, the same immutable-update
+  defect already listed for `Vector`, `CharVector` and `Word8Vector`.
+
+**MLton 20241230** — 2 failures, both in the required part; every optional
+structure it provides passes:
 
 - `Bool.fromString "   true"` is `NONE`; leading whitespace is not skipped,
   though `Int.fromString "   42"` correctly returns `SOME 42`.
 - `TextIO.endOfStream` stays `false` after `inputAll` has consumed the whole
   stream. Draining the same stream with `input1` sets it correctly.
 
-**Poly/ML 5.7.1** — 6 failures:
+**Poly/ML 5.7.1** — 6 failures in the required part:
 
 - `Real.fromString` rejects `"inf"`, `"infinity"` and `"nan"`, which are in the
   Basis grammar and which its own `Real.toString` produces, so the special
@@ -273,6 +382,16 @@ below.
 - Separately, 5.7.1 cannot compile `Vector.sub` or `Array.sub` applied to a
   constant sequence at a negative constant index. That is worked around by
   `Assert.hide` rather than by dropping the tests.
+
+and 6 more in the optional structures, from two:
+
+- `Word64` and `SysWord` repeat the two `LargeWord` defects above, `fromInt ~1`
+  and `~>>` past the full width. All three are the same 64-bit structure under
+  three names, so each defect is reported three times.
+- `Array2.nCols` raises `Subscript` for an array with no rows: both
+  `array (0, 3, init)` and `fromList []` have zero rows, and asking either for
+  its column count raises rather than answering `3` and `0`. `nRows` of an
+  array with no columns is fine, so only the one direction is affected.
 
 Poly/ML 5.7.1 dates from 2018 and is what Ubuntu ships; a current release may
 behave differently.
