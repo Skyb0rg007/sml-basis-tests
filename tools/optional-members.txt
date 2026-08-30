@@ -1,0 +1,141 @@
+# Every value, exception and constructor of the *signatures the optional
+# structures introduce*, one per line, as Structure.member.
+#
+# The line this list draws is deliberate.  The optional structures fall into
+# two kinds.  Most of them -- Int32, Int64, IntInf, Word32, Word64, SysWord,
+# FixedInt, Real32, Real64, IntVector, RealArray and the rest -- are further
+# instances of INTEGER, WORD, REAL and the MONO_* signatures, whose members
+# are already in tools/required-members.txt and already exercised by the
+# generic bodies in src/tests/gen-*.sml.  Listing Int32.quot beside Int.quot
+# would check the same line of the same file twice and say nothing new.
+#
+# What is listed here is the surface those structures add: the part of INT_INF
+# that INTEGER does not describe, and PACK_WORD, PACK_REAL and ARRAY2, which
+# no required structure implements.  Those are the members a suite could
+# genuinely forget.
+#
+# tools/check-coverage.sh checks that each entry is exercised somewhere under
+# src/optional, resolving the generic files against every instance the
+# per-implementation profiles apply them to.  Lines beginning with # are
+# comments.
+
+# ---- IntInf, beyond INTEGER ----
+IntInf.divMod
+IntInf.quotRem
+IntInf.pow
+IntInf.log2
+IntInf.orb
+IntInf.xorb
+IntInf.andb
+IntInf.notb
+IntInf.<<
+IntInf.~>>
+
+# ---- PackWord ----
+PackWord16Big.bytesPerElem
+PackWord16Big.isBigEndian
+PackWord16Big.subVec
+PackWord16Big.subVecX
+PackWord16Big.subArr
+PackWord16Big.subArrX
+PackWord16Big.update
+PackWord16Little.bytesPerElem
+PackWord16Little.isBigEndian
+PackWord16Little.subVec
+PackWord16Little.subVecX
+PackWord16Little.subArr
+PackWord16Little.subArrX
+PackWord16Little.update
+PackWord32Big.bytesPerElem
+PackWord32Big.isBigEndian
+PackWord32Big.subVec
+PackWord32Big.subVecX
+PackWord32Big.subArr
+PackWord32Big.subArrX
+PackWord32Big.update
+PackWord32Little.bytesPerElem
+PackWord32Little.isBigEndian
+PackWord32Little.subVec
+PackWord32Little.subVecX
+PackWord32Little.subArr
+PackWord32Little.subArrX
+PackWord32Little.update
+PackWord64Big.bytesPerElem
+PackWord64Big.isBigEndian
+PackWord64Big.subVec
+PackWord64Big.subVecX
+PackWord64Big.subArr
+PackWord64Big.subArrX
+PackWord64Big.update
+PackWord64Little.bytesPerElem
+PackWord64Little.isBigEndian
+PackWord64Little.subVec
+PackWord64Little.subVecX
+PackWord64Little.subArr
+PackWord64Little.subArrX
+PackWord64Little.update
+
+# ---- PackReal ----
+PackRealBig.bytesPerElem
+PackRealBig.isBigEndian
+PackRealBig.toBytes
+PackRealBig.fromBytes
+PackRealBig.subVec
+PackRealBig.subArr
+PackRealBig.update
+PackRealLittle.bytesPerElem
+PackRealLittle.isBigEndian
+PackRealLittle.toBytes
+PackRealLittle.fromBytes
+PackRealLittle.subVec
+PackRealLittle.subArr
+PackRealLittle.update
+PackReal32Big.bytesPerElem
+PackReal32Big.isBigEndian
+PackReal32Big.toBytes
+PackReal32Big.fromBytes
+PackReal32Big.subVec
+PackReal32Big.subArr
+PackReal32Big.update
+PackReal32Little.bytesPerElem
+PackReal32Little.isBigEndian
+PackReal32Little.toBytes
+PackReal32Little.fromBytes
+PackReal32Little.subVec
+PackReal32Little.subArr
+PackReal32Little.update
+PackReal64Big.bytesPerElem
+PackReal64Big.isBigEndian
+PackReal64Big.toBytes
+PackReal64Big.fromBytes
+PackReal64Big.subVec
+PackReal64Big.subArr
+PackReal64Big.update
+PackReal64Little.bytesPerElem
+PackReal64Little.isBigEndian
+PackReal64Little.toBytes
+PackReal64Little.fromBytes
+PackReal64Little.subVec
+PackReal64Little.subArr
+PackReal64Little.update
+
+# ---- Array2 ----
+Array2.array
+Array2.fromList
+Array2.tabulate
+Array2.sub
+Array2.update
+Array2.dimensions
+Array2.nCols
+Array2.nRows
+Array2.row
+Array2.column
+Array2.copy
+Array2.appi
+Array2.app
+Array2.modifyi
+Array2.modify
+Array2.foldi
+Array2.fold
+Array2.RowMajor
+Array2.ColMajor
