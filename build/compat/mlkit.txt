@@ -1,0 +1,5 @@
+# MLKit 4.7.22 has no String.scan, which the STRING signature requires, and a
+# whole-program compiler stops at the first unbound identifier.  Supplying it
+# is what lets the other 1299 tests run at all; the tests of String.scan
+# itself are skipped, not passed.
+src/compat/compat-mlkit.sml
