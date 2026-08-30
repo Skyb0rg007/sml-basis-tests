@@ -191,9 +191,20 @@ functor StringTestsFn (C : TEST_CONFIG) =
             A.eqStringOption "gap spanning whitespace"
               (SOME "ab", String.fromString "a\\   \\b")),
 
-          (* String.scan reads the body of an SML string literal, decoding
-           * escapes as it goes, and consumes as much as it can. *)
-          Case ("scan reads an escaped literal", fn () =>
+          Case ("toCString and fromCString", fn () =>
+            (A.eqString "toCString" ("a\\nb", String.toCString "a\nb");
+             A.eqStringOption "fromCString"
+               (SOME "a\nb", String.fromCString "a\\nb")))
+        ]
+        (* String.scan reads the body of an SML string literal, decoding
+         * escapes as it goes, and consumes as much as it can.
+         *
+         * On a build where src/compat supplies String.scan because the
+         * implementation does not have it, these two would be testing this
+         * suite's own code and are skipped instead. *)
+        @ onlyIf (not (Compat.isSubstituted "String.scan"),
+                  "String.scan is supplied by src/compat on this build")
+        [ Case ("scan reads an escaped literal", fn () =>
             case String.scan Substring.getc (Substring.full "ab\\ncd") of
                 NONE => A.fail "scan returned NONE"
               | SOME (v, rest) =>
@@ -206,12 +217,7 @@ functor StringTestsFn (C : TEST_CONFIG) =
               | SOME (v, rest) =>
                   (A.eqString "the part it could read" ("ab", v);
                    A.eqString "and the rest is left"
-                     ("\\q", Substring.string rest))),
-
-          Case ("toCString and fromCString", fn () =>
-            (A.eqString "toCString" ("a\\nb", String.toCString "a\nb");
-             A.eqStringOption "fromCString"
-               (SOME "a\nb", String.fromCString "a\\nb")))
+                     ("\\q", Substring.string rest)))
         ]),
 
         Group ("laws",

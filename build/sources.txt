@@ -6,6 +6,8 @@ src/framework/test.sml
 src/framework/runner.sml
 src/config/config.sml
 src/config/selected.sml
+src/compat/compat.sml
+@compat
 src/tests/test-general.sml
 src/tests/test-option.sml
 src/tests/test-bool.sml

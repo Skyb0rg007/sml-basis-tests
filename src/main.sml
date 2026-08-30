@@ -64,9 +64,17 @@ structure Main =
           | flag :: _ => raise BadUsage ("unrecognised argument: " ^ flag)
       end
 
+    (* A build that had to supply a Basis member itself says so here, so that
+     * the substitution is visible to someone reading only the header.  The
+     * tests of such a member are skipped, not run; see src/compat/. *)
+    val substitutedRows =
+      case Compat.substituted of
+          [] => []
+        | ns => ["  substituted     " ^ String.concatWith ", " ns]
+
     fun header (opts : Runner.options) =
       String.concatWith "\n"
-        [ "Standard ML Basis Library test suite"
+        ([ "Standard ML Basis Library test suite"
         , "  configuration   " ^ Config.implName
         , "  int precision   "
           ^ (case Int.precision of
@@ -78,8 +86,7 @@ structure Main =
           ^ " digits, radix " ^ Int.toString Real.radix
         , "  seed            " ^ Int.toString (#seed opts)
         , "  trials          " ^ Int.toString (#trials opts) ^ " per property"
-        , ""
-        ]
+        ] @ substitutedRows @ [ "" ])
 
     fun runWith args =
       if List.exists (fn a => a = "--help") args

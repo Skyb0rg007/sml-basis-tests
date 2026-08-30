@@ -39,6 +39,13 @@ functor RealTestsFn (C : TEST_CONFIG) =
         A.eqBy (op =, name) msg (e, a)
       end
 
+    (* Real.toDecimal and Real.fromDecimal are the two members most often
+     * absent, and a build may supply them from src/compat to compile at all.
+     * Where it has, the tests below would be testing this suite's own code,
+     * so they are skipped with that as the reason. *)
+    val ownDecimal = not (Compat.isSubstituted "Real.toDecimal")
+    val decimalWhy = "Real.toDecimal comes from src/compat on this build"
+
     val suite = Group ("Real",
       [ Group ("format parameters",
         [ Case ("radix and precision are sensible", fn () =>
@@ -449,6 +456,7 @@ functor RealTestsFn (C : TEST_CONFIG) =
         ]),
 
         Group ("decimal approximations",
+        onlyIf (ownDecimal, decimalWhy)
         [ (* toDecimal reports the value as 0.d1d2...dn times 10^exp. *)
           Case ("toDecimal decomposes a value", fn () =>
             let
@@ -497,9 +505,10 @@ functor RealTestsFn (C : TEST_CONFIG) =
             (A.eqString "one and a half"
                ("0.15E1", IEEEReal.toString (Real.toDecimal 1.5));
              A.eqString "a negative value"
-               ("~0.1225E2", IEEEReal.toString (Real.toDecimal ~12.25)))),
-
-          Case ("IEEEReal.fromString reads it back", fn () =>
+               ("~0.1225E2", IEEEReal.toString (Real.toDecimal ~12.25))))
+        ]
+        @
+        [ Case ("IEEEReal.fromString reads it back", fn () =>
             case IEEEReal.fromString "0.15E1" of
                 NONE => A.fail "fromString returned NONE"
               | SOME d =>
@@ -699,9 +708,10 @@ functor RealTestsFn (C : TEST_CONFIG) =
                                         (Substring.full
                                            (Real.fmt StringCvt.EXACT x)) of
                                      NONE => false
-                                   | SOME (y, _) => Real.== (x, y))),
-
-          P.forAll ("fromDecimal inverts toDecimal", reals, showR,
+                                   | SOME (y, _) => Real.== (x, y)))
+        ]
+        @ onlyIf (ownDecimal, decimalWhy)
+        [ P.forAll ("fromDecimal inverts toDecimal", reals, showR,
                     fn x =>
                       P.implies (Real.isFinite x,
                                  case Real.fromDecimal (Real.toDecimal x) of
@@ -723,9 +733,10 @@ functor RealTestsFn (C : TEST_CONFIG) =
                                    | SOME d =>
                                        (case Real.fromDecimal d of
                                             NONE => false
-                                          | SOME y => Real.== (x, y)))),
-
-          P.forAll ("fromInt agrees with the integer ordering",
+                                          | SOME y => Real.== (x, y))))
+        ]
+        @
+        [ P.forAll ("fromInt agrees with the integer ordering",
                     G.pair (G.smallInt, G.smallInt),
                     Show.pair (Show.int, Show.int),
                     fn (a, b) =>

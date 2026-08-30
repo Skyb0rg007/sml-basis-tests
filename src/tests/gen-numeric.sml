@@ -428,6 +428,12 @@ functor RealInstanceTestsFn (structure R : REAL
     val pairR = G.pair (genR, genR)
     val showPair = Show.pair (showR, showR)
 
+    (* A build may supply toDecimal and fromDecimal from src/compat when the
+     * implementation lacks them; the tests of those then have this suite's own
+     * code on both sides and are skipped. *)
+    val ownDecimal = not (Compat.isSubstituted (name ^ ".toDecimal"))
+    val decimalWhy = name ^ ".toDecimal comes from src/compat on this build"
+
     val suite = Group (name,
       [ Case ("format parameters", fn () =>
           (A.that "radix is at least two" (R.radix >= 2);
@@ -582,9 +588,10 @@ functor RealInstanceTestsFn (structure R : REAL
            A.eqString "fmt in scientific notation"
              ("1.50E0", R.fmt (StringCvt.SCI (SOME 2)) (R./ (r 3, r 2)));
            A.raises "a negative digit count" A.isSize
-             (fn () => R.fmt (StringCvt.FIX (SOME (A.hide ~1))) (r 1)))),
-
-        Case ("decimal approximations", fn () =>
+             (fn () => R.fmt (StringCvt.FIX (SOME (A.hide ~1))) (r 1))))
+        ]
+        @ onlyIf (ownDecimal, decimalWhy)
+        [ Case ("decimal approximations", fn () =>
           let val d = R.toDecimal (R./ (r 3, r 2))
           in
             A.eqBool "sign" (false, #sign d);
@@ -593,9 +600,10 @@ functor RealInstanceTestsFn (structure R : REAL
             case R.fromDecimal d of
                 NONE => A.fail "fromDecimal returned NONE"
               | SOME v => eqR "fromDecimal inverts toDecimal" (R./ (r 3, r 2), v)
-          end),
-
-        P.forAll ("addition commutes", pairR, showPair,
+          end)
+        ]
+        @
+        [ P.forAll ("addition commutes", pairR, showPair,
                   fn (a, b) =>
                     P.implies (R.isFinite (R.+ (a, b)), R.== (R.+ (a, b), R.+ (b, a)))),
 
@@ -647,14 +655,16 @@ functor RealInstanceTestsFn (structure R : REAL
                   genR, showR,
                   fn a =>
                     case R.fromString (R.fmt StringCvt.EXACT a) of
-                        NONE => false | SOME v => R.== (a, v)),
-
-        P.forAll ("fromDecimal inverts toDecimal", genR, showR,
+                        NONE => false | SOME v => R.== (a, v))
+        ]
+        @ onlyIf (ownDecimal, decimalWhy)
+        [ P.forAll ("fromDecimal inverts toDecimal", genR, showR,
                   fn a =>
                     case R.fromDecimal (R.toDecimal a) of
-                        NONE => false | SOME v => R.== (a, v)),
-
-        P.forAll ("LargeReal round trips", genR, showR,
+                        NONE => false | SOME v => R.== (a, v))
+        ]
+        @
+        [ P.forAll ("LargeReal round trips", genR, showR,
                   fn a =>
                     R.== (a, R.fromLarge IEEEReal.TO_NEAREST (R.toLarge a))),
 

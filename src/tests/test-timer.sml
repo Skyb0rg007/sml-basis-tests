@@ -32,6 +32,12 @@ functor TimerTestsFn (C : TEST_CONFIG) =
       A.that (what ^ " is not negative: " ^ Time.toString t)
              (Time.>= (t, Time.zeroTime))
 
+    (* checkCPUTimes and checkGCTime are the collector accounting, which an
+     * implementation without one cannot report and a shim can only invent.
+     * Where they come from src/compat these are skipped, not passed. *)
+    val ownGCTimes = not (Compat.isSubstituted "Timer.checkCPUTimes")
+    val gcWhy = "Timer.checkCPUTimes comes from src/compat on this build"
+
     val suite = Group ("Timer",
       [ Group ("real time",
         [ Case ("a fresh real timer starts at or near zero", fn () =>
@@ -97,9 +103,10 @@ functor TimerTestsFn (C : TEST_CONFIG) =
             in
               A.that "user time is monotone" (Time.>= (u2, u1));
               A.that "system time is monotone" (Time.>= (s2, s1))
-            end),
-
-          Case ("checkGCTime is non-negative", fn () =>
+            end)
+        ]
+        @ onlyIf (ownGCTimes, gcWhy)
+        [ Case ("checkGCTime is non-negative", fn () =>
             let
               val c = Timer.startCPUTimer ()
               val () = burn ()
@@ -140,9 +147,10 @@ functor TimerTestsFn (C : TEST_CONFIG) =
                  * the later reading cannot be the smaller one. *)
                 A.that "the later reading is not smaller"
                        (Time.>= (direct, #usr gc))
-              end),
-
-          Case ("totalCPUTimer measures the whole process", fn () =>
+              end)
+        ]
+        @
+        [ Case ("totalCPUTimer measures the whole process", fn () =>
             let
               val total = Timer.totalCPUTimer ()
               val since = Timer.startCPUTimer ()
