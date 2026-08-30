@@ -40,5 +40,6 @@ src/tests/gen-mono-seq.sml
 src/tests/gen-mono-slice.sml
 src/tests/gen-numeric.sml
 src/tests/test-instances.sml
+@optional
 src/tests/all-tests.sml
 src/main.sml

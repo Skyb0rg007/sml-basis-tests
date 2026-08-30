@@ -1,0 +1,4 @@
+# The portable profile: no optional structure is named at all, so this list
+# compiles on any implementation.  build/sources.cm, build/sources.mlb and
+# build/load.sml are generated from it.
+src/optional/opt-none.sml

@@ -3,6 +3,13 @@
  * Each test module is a functor over TEST_CONFIG, whether or not it currently
  * consults the configuration.  Keeping the shape uniform means a module can
  * start depending on a configuration flag later without any change here.
+ *
+ * OptionalTestsFn is the one whose body varies between builds.  Every other
+ * module here names only structures the Basis requires, so it compiles
+ * anywhere; the optional structures an implementation happens to provide
+ * cannot be named in a file that must compile everywhere, so they are
+ * declared in a profile chosen by the build description.  See
+ * src/optional/opt-none.sml for the profile that names none of them.
  *)
 
 functor AllTestsFn (C : TEST_CONFIG) =
@@ -38,6 +45,7 @@ functor AllTestsFn (C : TEST_CONFIG) =
     structure T29 = LargeTestsFn (C)
     structure T30 = TextIOStreamTestsFn (C)
     structure T31 = InstanceTestsFn (C)
+    structure T32 = OptionalTestsFn (C)
 
     val suite =
       Test.Group ("Standard ML Basis Library",
@@ -47,6 +55,6 @@ functor AllTestsFn (C : TEST_CONFIG) =
         , T16.suite, T17.suite, T18.suite, T19.suite, T20.suite
         , T21.suite, T22.suite, T23.suite, T24.suite, T25.suite
         , T26.suite, T27.suite, T28.suite, T29.suite, T30.suite
-        , T31.suite
+        , T31.suite, T32.suite
         ])
   end
