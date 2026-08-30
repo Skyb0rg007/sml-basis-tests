@@ -395,3 +395,37 @@ and 6 more in the optional structures, from two:
 
 Poly/ML 5.7.1 dates from 2018 and is what Ubuntu ships; a current release may
 behave differently.
+
+## Continuous integration
+
+`.github/workflows/conformance.yml` installs every implementation from a
+binary — MLton and Poly/ML from Ubuntu, SML/NJ from the openSUSE Build Service
+repository that packages it for Debian and Ubuntu, MLKit from the tarball
+attached to its GitHub release — runs the suite on each, and publishes a
+Markdown report as the job summary and as an artifact. Nothing is built from
+source; compiling any of the four would take longer than the test run does.
+
+Two scripts do the work, and both are usable outside CI:
+
+```sh
+tools/ci-run.sh mlton out --trials 100   # build, run, record the outcome
+tools/ci-report.sh out > report.md       # turn the logs into one report
+```
+
+`ci-run.sh` records an implementation's outcome without letting it stop the
+ones after it, so a compiler that cannot build the suite still leaves a full
+report for the others. It classifies a run by whether it reached its tally
+line rather than by exit status, because "this implementation has 27
+conformance defects" and "this compiler rejected the source" are different
+events that a single exit code cannot tell apart.
+
+The workflow follows that division. A failing test does not fail it: the suite
+exists to find defects in the implementations it runs on, and every one of
+them has some, so a red build every time would say nothing. A compiler that
+cannot build the suite does fail it, since then nothing was learned.
+
+**MLKit 4.7.22** is the exception, and is exempt from that gate. It has no
+`String.scan`, which the `STRING` signature requires, so it stops compiling at
+`src/tests/test-string.sml` and never reaches a test. That is itself the
+finding, and the report states it on every run; making it a red build would
+only teach people to ignore the red.
