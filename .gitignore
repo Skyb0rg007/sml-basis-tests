@@ -17,3 +17,6 @@ basis-tests-mlkit
 
 # scratch directory created by the file-system tests
 scratch/
+
+# CI report output
+ci-results/

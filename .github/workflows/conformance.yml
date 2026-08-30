@@ -1,0 +1,127 @@
+# Runs the suite on every implementation we can install a binary of, and
+# publishes what each of them reported as a Markdown file.
+#
+# Nothing is built from source here.  MLton and Poly/ML come from Ubuntu,
+# SML/NJ from the openSUSE Build Service repository that packages it for
+# Debian and Ubuntu, and MLKit from the binary tarball attached to its GitHub
+# release.  Building any of them would take longer than the whole test run.
+#
+# A failing test does not fail this workflow.  The suite exists to find
+# defects in the implementations it runs on, and all four have some; a red
+# build every time would say nothing.  What does fail the workflow is a
+# compiler that cannot build the suite at all, since then nothing was learned
+# -- see the last step for the one implementation exempted from that, and why.
+name: Basis conformance
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: Seed for the random generator
+        default: "20260101"
+      trials:
+        description: Trials per property
+        default: "100"
+  schedule:
+    # Mondays, so a new release of any of the four shows up within the week.
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  conformance:
+    name: Four implementations
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      SEED: ${{ inputs.seed || '20260101' }}
+      TRIALS: ${{ inputs.trials || '100' }}
+      # The tarball has no "latest" alias, so the version is named here.
+      MLKIT_VERSION: v4.7.22
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MLton and Poly/ML
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mlton polyml
+
+      - name: Install SML/NJ from the openSUSE Build Service
+        run: |
+          # The repository is laid out per distribution release, so the path
+          # follows the runner rather than being pinned alongside it.
+          release="xUbuntu_$(lsb_release -rs)"
+          key=/etc/apt/keyrings/home_skyenet_smlnj.gpg
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL "https://download.opensuse.org/repositories/home:skyenet:smlnj/${release}/Release.key" \
+            | gpg --dearmor | sudo tee "$key" > /dev/null
+          echo "deb [signed-by=$key] https://download.opensuse.org/repositories/home:/skyenet:/smlnj/${release}/ /" \
+            | sudo tee /etc/apt/sources.list.d/home-skyenet-smlnj.sources > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends smlnj
+
+      - name: Install MLKit from its release tarball
+        run: |
+          url="https://github.com/melsman/mlkit/releases/download/${MLKIT_VERSION}/mlkit-bin-dist-linux.tgz"
+          curl -fsSL "$url" -o /tmp/mlkit.tgz
+          mkdir -p /tmp/mlkit
+          tar xzf /tmp/mlkit.tgz -C /tmp/mlkit
+          # Installing under /usr/local is what makes the Makefile write the
+          # mlb-path-map that tells mlkit where its own basis library is.
+          sudo make -C /tmp/mlkit/mlkit-bin-dist-linux install PREFIX=/usr/local
+
+      - name: Report the versions installed
+        run: |
+          sml @SMLversion
+          mlton 2>&1 | head -1
+          poly -v | head -1
+          mlkit --version
+
+      # Each run records its own outcome and does not stop the ones after it,
+      # so one implementation failing to build still leaves a full report for
+      # the other three.
+      - name: SML/NJ
+        run: tools/ci-run.sh smlnj ci-results --seed "$SEED" --trials "$TRIALS"
+      - name: MLton
+        run: tools/ci-run.sh mlton ci-results --seed "$SEED" --trials "$TRIALS"
+      - name: Poly/ML
+        run: tools/ci-run.sh polyml ci-results --seed "$SEED" --trials "$TRIALS"
+      - name: MLKit
+        run: tools/ci-run.sh mlkit ci-results --seed "$SEED" --trials "$TRIALS"
+
+      - name: Write the report
+        run: |
+          CI_HOST="${{ runner.os }} ${{ runner.arch }}, ubuntu-24.04" \
+            tools/ci-report.sh ci-results > ci-results/conformance.md
+          cat ci-results/conformance.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the report and the raw logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-report
+          path: ci-results/
+
+      - name: Fail only if a compiler could not build the suite
+        run: |
+          rc=0
+          for id in smlnj mlton polyml; do
+            if [ "$(cat ci-results/$id.status)" != completed ]; then
+              echo "::error::$id could not build the suite"
+              rc=1
+            fi
+          done
+          # MLKit is deliberately not in that list.  MLKit 4.7.22 has no
+          # String.scan, which the STRING signature requires, so it stops
+          # compiling at src/tests/test-string.sml.  That is a finding about
+          # MLKit, recorded in the report on every run; turning it into a red
+          # build would only train people to ignore the red.
+          if [ "$(cat ci-results/mlkit.status)" = completed ]; then
+            echo "::notice::MLKit now builds the suite; it can join the gate above"
+          fi
+          exit $rc
