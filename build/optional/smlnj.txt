@@ -1,0 +1,8 @@
+# Optional structures SML/NJ provides.  It has no Real32, no PackRealBig or
+# PackRealLittle, and no int sequences, so those files are absent here.
+src/optional/gen-pack-word.sml
+src/optional/gen-pack-real.sml
+src/optional/test-int-inf.sml
+src/optional/test-array2.sml
+src/optional/inst-real-seq.sml
+src/optional/opt-smlnj.sml

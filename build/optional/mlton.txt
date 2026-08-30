@@ -1,0 +1,9 @@
+# Optional structures MLton provides.  Order is dependency order; the profile
+# file that applies these to the configuration comes last.
+src/optional/gen-pack-word.sml
+src/optional/gen-pack-real.sml
+src/optional/test-int-inf.sml
+src/optional/test-array2.sml
+src/optional/inst-int-seq.sml
+src/optional/inst-real-seq.sml
+src/optional/opt-mlton.sml

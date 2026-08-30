@@ -1,0 +1,9 @@
+# Optional structures Poly/ML provides.  It has no Int64, no Real32 and no
+# PackWord64, and its only PackReal pair is the unsuffixed one.
+src/optional/gen-pack-word.sml
+src/optional/gen-pack-real.sml
+src/optional/test-int-inf.sml
+src/optional/test-array2.sml
+src/optional/inst-int-seq.sml
+src/optional/inst-real-seq.sml
+src/optional/opt-polyml.sml
