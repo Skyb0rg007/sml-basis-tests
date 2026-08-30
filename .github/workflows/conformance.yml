@@ -1,19 +1,26 @@
-# Runs the suite on every implementation we can install a binary of, and
-# publishes what each of them reported as a Markdown file.
+# Runs the suite on the three implementations that can build it, and publishes
+# what each of them reported as a Markdown file.
 #
-# Nothing is built from source here.  MLton and Poly/ML come from Ubuntu,
+# Nothing is built from source here.  MLton and Poly/ML come from Ubuntu, and
 # SML/NJ from the openSUSE Build Service repository that packages it for
-# Debian and Ubuntu, and MLKit from the binary tarball attached to its GitHub
-# release.  Building any of them would take longer than the whole test run.
+# Debian and Ubuntu.  Building any of them would take longer than the whole
+# test run.
 #
-# Manual trigger only: a full run builds four compilers' worth of the suite,
+# MLKit is not among them.  src/compat/compat-mlkit.sml supplies the seven
+# required members MLKit 4.7.22 lacks, and with it MLKit type-checks the whole
+# suite, but its back end then dies with "Impossible: CompileDec.succeed" --
+# an internal compiler error no change to this suite can address.  There is
+# nothing for a run to report, so it does not run.  run/mlkit.sh and
+# tools/ci-run.sh still know how, for whenever that is fixed.
+#
+# Manual trigger only: a full run builds three compilers' worth of the suite,
 # and its output is a report to be read rather than a signal to be watched.
 #
 # A failing test does not fail this workflow.  The suite exists to find
-# defects in the implementations it runs on, and all four have some; a red
+# defects in the implementations it runs on, and all three have some; a red
 # build every time would say nothing.  What does fail the workflow is a
-# compiler that cannot build the suite at all, since then nothing was learned
-# -- see the last step for the one implementation exempted from that, and why.
+# compiler that cannot build the suite at all, since then nothing was
+# learned.
 name: Basis conformance
 
 on:
@@ -31,14 +38,12 @@ permissions:
 
 jobs:
   conformance:
-    name: Four implementations
+    name: Three implementations
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
       SEED: ${{ inputs.seed }}
       TRIALS: ${{ inputs.trials }}
-      # The tarball has no "latest" alias, so the version is named here.
-      MLKIT_VERSION: v4.7.22
 
     steps:
       # The actions are pinned to a commit rather than a tag: a tag can be
@@ -66,34 +71,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends smlnj
 
-      - name: Install MLKit from its release tarball
-        run: |
-          url="https://github.com/melsman/mlkit/releases/download/${MLKIT_VERSION}/mlkit-bin-dist-linux.tgz"
-          curl -fsSL "$url" -o /tmp/mlkit.tgz
-          mkdir -p /tmp/mlkit
-          tar xzf /tmp/mlkit.tgz -C /tmp/mlkit
-          # Installing under /usr/local is what makes the Makefile write the
-          # mlb-path-map that tells mlkit where its own basis library is.
-          sudo make -C /tmp/mlkit/mlkit-bin-dist-linux install PREFIX=/usr/local
-
       - name: Report the versions installed
         run: |
           sml @SMLversion
           mlton 2>&1 | head -1
           poly -v | head -1
-          mlkit --version
 
       # Each run records its own outcome and does not stop the ones after it,
       # so one implementation failing to build still leaves a full report for
-      # the other three.
+      # the other two.
       - name: SML/NJ
         run: tools/ci-run.sh smlnj ci-results --seed "$SEED" --trials "$TRIALS"
       - name: MLton
         run: tools/ci-run.sh mlton ci-results --seed "$SEED" --trials "$TRIALS"
       - name: Poly/ML
         run: tools/ci-run.sh polyml ci-results --seed "$SEED" --trials "$TRIALS"
-      - name: MLKit
-        run: tools/ci-run.sh mlkit ci-results --seed "$SEED" --trials "$TRIALS"
 
       - name: Write the report
         run: |
@@ -117,15 +109,4 @@ jobs:
               rc=1
             fi
           done
-          # MLKit is deliberately not in that list.  src/compat supplies the
-          # seven required members MLKit 4.7.22 lacks, so it type-checks the
-          # whole suite, but its back end then dies with "Impossible:
-          # CompileDec.succeed" -- an internal compiler error that reproduces
-          # with src/main.sml exactly as committed and that no optimisation
-          # flag avoids.  That is a finding about MLKit, recorded in the
-          # report on every run; turning it into a red build would only train
-          # people to ignore the red.
-          if [ "$(cat ci-results/mlkit.status)" = completed ]; then
-            echo "::notice::MLKit now builds the suite; it can join the gate above"
-          fi
           exit $rc

@@ -4,9 +4,6 @@
 # on its own; the cost of that is a pin that silently goes stale, which is
 # what this file is for.  Dependabot reads the version from the comment after
 # each hash, and rewrites the hash and the comment together.
-#
-# It cannot see MLKIT_VERSION in the conformance workflow, which pins a GitHub
-# release of a compiler rather than an action.  That one is bumped by hand.
 version: 2
 
 updates:

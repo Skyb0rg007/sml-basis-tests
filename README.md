@@ -14,7 +14,7 @@ a path separator, or a floating point tolerance.
 run/smlnj.sh          # SML/NJ, via CM and ml-build
 run/mlton.sh          # MLton, via the MLB file
 run/polyml.sh         # Poly/ML, via the sequential loader
-run/mlkit.sh          # MLKit, reads the portable MLB file
+run/mlkit.sh          # MLKit, reads an MLB file as MLton does
 ```
 
 The first three build a description that includes the optional structures
@@ -24,6 +24,10 @@ portable description instead, the one that names no optional structure at all:
 ```sh
 run/mlton.sh --core --only Word
 ```
+
+`run/mlkit.sh` does not currently produce a binary: MLKit 4.7.22 stops with an
+internal compiler error that has nothing to do with this suite. See the last
+section.
 
 Each script accepts the suite's own options:
 
@@ -421,16 +425,16 @@ behave differently.
 
 ## Continuous integration
 
-`.github/workflows/conformance.yml` installs every implementation from a
-binary — MLton and Poly/ML from Ubuntu, SML/NJ from the openSUSE Build Service
-repository that packages it for Debian and Ubuntu, MLKit from the tarball
-attached to its GitHub release — runs the suite on each, and publishes a
-Markdown report as the job summary and as an artifact. Nothing is built from
-source; compiling any of the four would take longer than the test run does.
+`.github/workflows/conformance.yml` installs the three implementations that
+can build the suite from a binary — MLton and Poly/ML from Ubuntu, SML/NJ from
+the openSUSE Build Service repository that packages it for Debian and Ubuntu —
+runs the suite on each, and publishes a Markdown report as the job summary and
+as an artifact. Nothing is built from source; compiling any of the three would
+take longer than the test run does.
 
 It runs on demand only — "Run workflow" in the Actions tab, taking the seed
 and the trial count as inputs. Its output is a report to be read rather than a
-signal to be watched, and a full run costs four compilers' worth of building
+signal to be watched, and a full run costs three compilers' worth of building
 the suite.
 
 Two scripts do the work, and both are usable outside CI:
@@ -452,13 +456,13 @@ exists to find defects in the implementations it runs on, and every one of
 them has some, so a red build every time would say nothing. A compiler that
 cannot build the suite does fail it, since then nothing was learned.
 
-**MLKit 4.7.22** is the exception, and is exempt from that gate. With
-`src/compat/compat-mlkit.sml` supplying the seven required members it lacks it
-now type-checks the whole suite — every one of the 992 required members
-resolves — but its back end then dies with `Impossible: CompileDec.succeed`
-while compiling the program. That is an internal compiler error, not a missing
-member: it reproduces with `src/main.sml` exactly as committed, does not
-reproduce in any smaller program built out of the same code, and none of
-`-no_opt`, `-no_aopt` or `-no_cross_opt` avoids it. So MLKit still produces no
-binary, for a reason no change to this suite can address. The report states it
-on every run; making it a red build would only teach people to ignore the red.
+**MLKit is not in the run.** With `src/compat/compat-mlkit.sml` supplying the
+seven required members it lacks, MLKit 4.7.22 type-checks the whole suite —
+every one of the 992 required members resolves — but its back end then dies
+with `Impossible: CompileDec.succeed` while compiling the program. That is an
+internal compiler error, not a missing member: it reproduces with
+`src/main.sml` exactly as committed, does not reproduce in any smaller program
+built out of the same code, and none of `-no_opt`, `-no_aopt` or
+`-no_cross_opt` avoids it. There is no run to report, so CI does not attempt
+one. `run/mlkit.sh` and `tools/ci-run.sh` still know how, for whenever that is
+fixed.
