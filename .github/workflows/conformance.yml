@@ -6,6 +6,9 @@
 # Debian and Ubuntu, and MLKit from the binary tarball attached to its GitHub
 # release.  Building any of them would take longer than the whole test run.
 #
+# Manual trigger only: a full run builds four compilers' worth of the suite,
+# and its output is a report to be read rather than a signal to be watched.
+#
 # A failing test does not fail this workflow.  The suite exists to find
 # defects in the implementations it runs on, and all four have some; a red
 # build every time would say nothing.  What does fail the workflow is a
@@ -14,9 +17,6 @@
 name: Basis conformance
 
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
     inputs:
       seed:
@@ -25,9 +25,6 @@ on:
       trials:
         description: Trials per property
         default: "100"
-  schedule:
-    # Mondays, so a new release of any of the four shows up within the week.
-    - cron: "17 6 * * 1"
 
 permissions:
   contents: read
@@ -38,8 +35,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
-      SEED: ${{ inputs.seed || '20260101' }}
-      TRIALS: ${{ inputs.trials || '100' }}
+      SEED: ${{ inputs.seed }}
+      TRIALS: ${{ inputs.trials }}
       # The tarball has no "latest" alias, so the version is named here.
       MLKIT_VERSION: v4.7.22
 

@@ -405,6 +405,11 @@ attached to its GitHub release — runs the suite on each, and publishes a
 Markdown report as the job summary and as an artifact. Nothing is built from
 source; compiling any of the four would take longer than the test run does.
 
+It runs on demand only — "Run workflow" in the Actions tab, taking the seed
+and the trial count as inputs. Its output is a report to be read rather than a
+signal to be watched, and a full run costs four compilers' worth of building
+the suite.
+
 Two scripts do the work, and both are usable outside CI:
 
 ```sh
