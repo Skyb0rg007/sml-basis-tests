@@ -131,6 +131,17 @@ functor LargeTestsFn (C : TEST_CONFIG) =
           Case ("it is at least as wide as Word8", fn () =>
             A.that "LargeWord is at least eight bits" (LW.wordSize >= 8)),
 
+          (* The WORD Discussion: "We require that
+           *  LargeWord.wordSize <= LargeInt.precision". *)
+          Case ("LargeInt is precise enough to hold a LargeWord", fn () =>
+            case LI.precision of
+                NONE => ()   (* arbitrary precision is certainly enough *)
+              | SOME p =>
+                  A.that ("LargeWord.wordSize " ^ Int.toString LW.wordSize
+                          ^ " must not exceed LargeInt.precision "
+                          ^ Int.toString p)
+                         (LW.wordSize <= p)),
+
           Case ("arithmetic wraps rather than trapping", fn () =>
             let
               val allOnes = LW.notb (LW.fromInt 0)

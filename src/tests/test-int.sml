@@ -65,6 +65,23 @@ functor IntTestsFn (C : TEST_CONFIG) =
                         (s = 0 orelse s = ~1)
               end),
 
+          (* "If precision is SOME(n), then we have minInt = -2^(n-1) and
+           * maxInt = 2^(n-1) - 1."  Built by doubling so that no intermediate
+           * leaves the range being described. *)
+          Case ("precision fixes minInt and maxInt exactly", fn () =>
+            if not fixed then ()
+            else
+              let
+                val n = valOf Int.precision
+                fun ones (0, acc) = acc
+                  | ones (k, acc) = ones (k - 1, 2 * acc + 1)
+                val expectedMax = ones (n - 2, 1)   (* 2^(n-1) - 1 *)
+              in
+                A.eqInt "maxInt = 2^(precision-1) - 1" (expectedMax, maxI ());
+                A.eqInt "minInt = ~(2^(precision-1))"
+                  (~expectedMax - 1, minI ())
+              end),
+
           Case ("int has at least 31 bits of precision", fn () =>
             if not fixed then ()
             else A.that "maxInt >= 2^30 - 1" (maxI () >= 1073741823))
@@ -181,7 +198,20 @@ functor IntTestsFn (C : TEST_CONFIG) =
               in
                 A.raises "fromString of an oversized literal" A.isOverflow
                   (fn () => Int.fromString tooBig)
-              end)
+              end),
+
+            (* "This function raises Overflow when an integer can be parsed,
+             * but is too large to be represented by type int" -- of scan, in
+             * every radix, not only of fromString. *)
+            Case ("scan of an oversized literal raises Overflow", fn () =>
+              (A.raises "decimal" A.isOverflow
+                 (fn () => scanDec (Int.fmt StringCvt.DEC (maxI ()) ^ "0"));
+               A.raises "hexadecimal" A.isOverflow
+                 (fn () => scanHex (Int.fmt StringCvt.HEX (maxI ()) ^ "0"));
+               A.raises "octal" A.isOverflow
+                 (fn () => scanOct (Int.fmt StringCvt.OCT (maxI ()) ^ "0"));
+               A.raises "binary" A.isOverflow
+                 (fn () => scanBin (Int.fmt StringCvt.BIN (maxI ()) ^ "0"))))
           ]),
 
         Group ("conversion to and from text",
@@ -236,7 +266,43 @@ functor IntTestsFn (C : TEST_CONFIG) =
           Case ("scan stops at a digit outside the radix", fn () =>
             (A.eqIntOption "2 is not binary" (SOME 1, scanBin "12");
              A.eqIntOption "8 is not octal" (SOME 7, scanOct "78");
-             A.eqIntOption "g is not hexadecimal" (SOME 15, scanHex "fg")))
+             A.eqIntOption "g is not hexadecimal" (SOME 15, scanHex "fg"))),
+
+          (* "Note that strings such as "0xg" and "0x 123" are scanned as
+           * SOME(0), even using a hexadecimal radix." -- the 0x is only a
+           * prefix when a hexadecimal digit follows it; otherwise the 0 is
+           * the number and the x is the first unconsumed character. *)
+          Case ("an unfollowed 0x prefix scans as zero", fn () =>
+            let
+              fun scanRest s =
+                case Int.scan StringCvt.HEX Substring.getc (Substring.full s) of
+                    NONE => NONE
+                  | SOME (n, rest) => SOME (n, Substring.string rest)
+              val showIt = Show.option (Show.pair (Show.int, Show.string))
+            in
+              A.eqBy (op =, showIt) "0xg"
+                (SOME (0, "xg"), scanRest "0xg");
+              A.eqBy (op =, showIt) "0x 123"
+                (SOME (0, "x 123"), scanRest "0x 123");
+              A.eqBy (op =, showIt) "0x alone"
+                (SOME (0, "x"), scanRest "0x");
+              A.eqIntOption "through fromString-style scanning"
+                (SOME 0, scanHex "0xg")
+            end),
+
+          Case ("scan skips leading whitespace in every radix", fn () =>
+            (A.eqIntOption "binary" (SOME 5, scanBin "  \t101");
+             A.eqIntOption "octal" (SOME 15, scanOct "\n 17");
+             A.eqIntOption "decimal" (SOME 255, scanDec " \r\n255");
+             A.eqIntOption "hexadecimal" (SOME 255, scanHex " \f\vFF"))),
+
+          Case ("scan returns the unconsumed remainder", fn () =>
+            case Int.scan StringCvt.DEC Substring.getc
+                          (Substring.full "  42 rest") of
+                NONE => A.fail "scan returned NONE"
+              | SOME (n, rest) =>
+                  (A.eqInt "value" (42, n);
+                   A.eqString "remainder" (" rest", Substring.string rest)))
         ]),
 
         Group ("conversion to LargeInt",
@@ -365,7 +431,51 @@ functor IntTestsFn (C : TEST_CONFIG) =
                           (StringCvt.HEX, scanHex) ]),
 
           P.forAll ("LargeInt conversion round trips", G.anyInt, Show.int,
-                    fn a => Int.fromLarge (Int.toLarge a) = a)
+                    fn a => Int.fromLarge (Int.toLarge a) = a),
+
+          (* "The second form is equivalent to fmt StringCvt.DEC i." *)
+          P.forAll ("toString is fmt DEC", G.anyInt, Show.int,
+                    fn a => Int.toString a = Int.fmt StringCvt.DEC a),
+
+          (* "It is equivalent to the expression
+           *  StringCvt.scanString (scan StringCvt.DEC)." *)
+          P.forAll ("fromString is scanString of scan DEC",
+                    G.oneOf [ G.map Int.toString G.anyInt,
+                              G.printableString,
+                              G.map (fn (a, s) => Int.toString a ^ s)
+                                    (G.pair (G.anyInt, G.printableString)) ],
+                    Show.string,
+                    fn s =>
+                      let
+                        (* Both sides may legitimately raise Overflow on a
+                         * generated literal too large for int; what is being
+                         * checked is that they agree, exception included. *)
+                        fun outcome f = SOME (f ()) handle Overflow => NONE
+                      in
+                        outcome (fn () => Int.fromString s)
+                        = outcome (fn () =>
+                            StringCvt.scanString (Int.scan StringCvt.DEC) s)
+                      end),
+
+          (* "returns the negation of i, i.e., (0 - i)" *)
+          P.forAll ("negation is subtraction from zero", G.smallInt, Show.int,
+                    fn a => ~a = 0 - a),
+
+          P.forAll ("abs is the magnitude", G.smallInt, Show.int,
+                    fn a => Int.abs a = (if a < 0 then ~a else a)),
+
+          P.forAll ("the ordering operators agree with each other",
+                    G.pair (G.anyInt, G.anyInt), showPair,
+                    fn (a, b) =>
+                      (a < b) = not (a >= b)
+                      andalso (a > b) = not (a <= b)
+                      andalso (a <= b) = (a < b orelse a = b)),
+
+          P.forAll ("fmt DEC of a negative value is a tilde and the magnitude",
+                    G.smallInt, Show.int,
+                    fn a =>
+                      P.implies (a < 0,
+                                 Int.toString a = "~" ^ Int.toString (~a)))
         ])
       ])
   end

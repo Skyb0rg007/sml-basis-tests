@@ -124,6 +124,56 @@ functor WordInstanceTestsFn (structure W : WORD
              A.that "toLarge does not"
                (W.toLarge allOnes <> W.toLargeX allOnes))),
 
+        (* "In the former case, w is viewed as an integer value in the range
+         * [0,2^wordSize-1] ... toLargeInt raises Overflow if the target
+         * integer value cannot be represented as a LargeInt.int." *)
+        Case ("toLargeInt views the word as unsigned", fn () =>
+          let
+            val largeIntIsWider =
+              case LargeInt.precision of
+                  NONE => true
+                | SOME p => p > ws
+          in
+            if not largeIntIsWider then
+              A.raises "the unsigned value does not fit in LargeInt"
+                A.isOverflow (fn () => W.toLargeInt allOnes)
+            else
+              let
+                fun ones (0, acc) = acc
+                  | ones (k, acc) = ones (k - 1, LargeInt.+ (LargeInt.* (acc, 2), 1))
+              in
+                A.eqBy (op =, LargeInt.toString) "all ones is 2^wordSize - 1"
+                  (ones (ws - 1, 1), W.toLargeInt allOnes);
+                A.eqBy (op =, LargeInt.toString) "the top bit alone"
+                  (LargeInt.+ (LargeInt.div (ones (ws - 1, 1), 2), 1),
+                   W.toLargeInt topBit)
+              end
+          end),
+
+        (* "Since the precision of LargeInt.int is always at least wordSize
+         * ... toLargeIntX will never raise an exception." *)
+        Case ("toLargeIntX views the word as signed and never raises", fn () =>
+          (A.eqBy (op =, LargeInt.toString) "all ones is ~1"
+             (LargeInt.fromInt ~1, W.toLargeIntX allOnes);
+           A.that "the top bit is negative"
+             (LargeInt.< (W.toLargeIntX topBit, 0));
+           A.noRaise "all ones" (fn () => W.toLargeIntX allOnes);
+           A.noRaise "the top bit" (fn () => W.toLargeIntX topBit))),
+
+        (* "Even in this case, however, toInt will raise Overflow if the
+         * high-order bit of the word is set." *)
+        Case ("toInt reports a value that the default int cannot hold",
+          fn () =>
+            case Int.precision of
+                NONE => ()
+              | SOME p =>
+                  if ws < p then ()
+                  else
+                    (A.raises "all ones" A.isOverflow
+                       (fn () => W.toInt allOnes);
+                     A.raises "the top bit" A.isOverflow
+                       (fn () => W.toInt topBit))),
+
         (* The 2004 Basis still lists the older spellings alongside the new. *)
         Case ("the deprecated aliases agree with the current names", fn () =>
           (A.eqBy (op =, LargeWord.toString) "toLargeWord is toLarge"
@@ -146,7 +196,24 @@ functor WordInstanceTestsFn (structure W : WORD
            A.eqString "fmt hexadecimal" ("FF", W.fmt StringCvt.HEX (w 255));
            eqWOpt "scan decimal" (SOME (w 255), scanDec "255");
            eqWOpt "scan hexadecimal" (SOME (w 255), scanHex "FF");
-           eqWOpt "scan rejects a sign" (NONE, scanDec "~1"))),
+           eqWOpt "scan rejects a sign" (NONE, scanDec "~1");
+           eqWOpt "scan skips leading whitespace" (SOME (w 255), scanDec " \t 255");
+           eqWOpt "scan takes the 0w prefix" (SOME (w 255), scanDec "0w255");
+           eqWOpt "scan takes the 0wx prefix" (SOME (w 255), scanHex "0wxFF");
+           eqWOpt "scan takes the 0wX prefix" (SOME (w 255), scanHex "0wXFF");
+           eqWOpt "scan takes the 0X prefix" (SOME (w 255), scanHex "0XFF");
+           A.eqString "fmt generates no prefix"
+             ("101", W.fmt StringCvt.BIN (w 5)))),
+
+        (* "It raises Overflow when a number can be parsed, but is too large
+         * to fit in type word." *)
+        Case ("scanning a numeral too large for the word", fn () =>
+          (A.raises "decimal" A.isOverflow
+             (fn () => scanDec (W.fmt StringCvt.DEC allOnes ^ "0"));
+           A.raises "hexadecimal" A.isOverflow
+             (fn () => scanHex (W.fmt StringCvt.HEX allOnes ^ "0"));
+           A.raises "fromString" A.isOverflow
+             (fn () => W.fromString (W.toString allOnes ^ "0")))),
 
         P.forAll ("addition commutes", pairW, showPair,
                   fn (a, b) => W.+ (a, b) = W.+ (b, a)),
@@ -212,7 +279,103 @@ functor WordInstanceTestsFn (structure W : WORD
                   fn a => W.fromLarge (W.toLarge a) = a),
 
         P.forAll ("fromLargeInt inverts toLargeIntX", genW, showW,
-                  fn a => W.fromLargeInt (W.toLargeIntX a) = a)
+                  fn a => W.fromLargeInt (W.toLargeIntX a) = a),
+
+        P.forAll ("toLargeIntX never raises", genW, showW,
+                  fn a => (ignore (W.toLargeIntX a); true)),
+
+        (* "The version using toString is equivalent to fmt StringCvt.HEX i."
+         * and "It is equivalent to StringCvt.scanString (scan
+         * StringCvt.HEX)". *)
+        P.forAll ("toString is fmt HEX", genW, showW,
+                  fn a => W.toString a = W.fmt StringCvt.HEX a),
+
+        P.forAll ("fromString is scanString of scan HEX",
+                  G.oneOf [ G.map (fn a => W.toString a) genW,
+                            G.printableString ],
+                  Show.string,
+                  fn s =>
+                    let
+                      fun outcome f = SOME (f ()) handle Overflow => NONE
+                    in
+                      outcome (fn () => W.fromString s)
+                      = outcome (fn () =>
+                          StringCvt.scanString (W.scan StringCvt.HEX) s)
+                    end),
+
+        (* "<< returns (i * 2^n) mod 2^wordSize" and ">> returns
+         * floor(i / 2^n)", both with the arguments read as unsigned. *)
+        P.forAll ("a left shift is multiplication by a power of two",
+                  G.pair (genW, G.map Word.fromInt (G.int (0, ws - 1))),
+                  Show.pair (showW, Show.word),
+                  fn (a, k) => W.<< (a, k) = W.* (a, W.<< (one, k))),
+
+        P.forAll ("a logical right shift is division by a power of two",
+                  G.pair (genW, G.map Word.fromInt (G.int (0, ws - 1))),
+                  Show.pair (showW, Show.word),
+                  fn (a, k) => W.>> (a, k) = W.div (a, W.<< (one, k))),
+
+        (* "~>> ... When i is interpreted as a wordSize-bit 2's-complement
+         * integer ... it returns floor(i / 2^n)."  Only checkable where the
+         * signed value fits in the default int. *)
+        P.forAll ("an arithmetic right shift is signed division",
+                  G.pair (genW, G.map Word.fromInt (G.int (0, 20))),
+                  Show.pair (showW, Show.word),
+                  fn (a, k) =>
+                    P.impliesBy (signedFitsInInt andalso Word.toInt k < ws,
+                                 fn () =>
+                                   W.toIntX (W.~>> (a, k))
+                                   = W.toIntX a div
+                                     Word.toInt (Word.<< (0w1, k)))),
+
+        P.forAll ("min and max choose an argument and bracket both",
+                  pairW, showPair,
+                  fn (a, b) =>
+                    let
+                      val lo = W.min (a, b)
+                      val hi = W.max (a, b)
+                    in
+                      W.<= (lo, a) andalso W.<= (lo, b)
+                      andalso W.>= (hi, a) andalso W.>= (hi, b)
+                      andalso (lo = a orelse lo = b)
+                      andalso (hi = a orelse hi = b)
+                    end),
+
+        P.forAll ("negation is the two's complement", genW, showW,
+                  fn a => W.~ a = W.+ (W.notb a, one)),
+
+        P.forAll ("scan skips leading whitespace and reports the remainder",
+                  genW, showW,
+                  fn a =>
+                    case W.scan StringCvt.DEC Substring.getc
+                                (Substring.full ("  " ^ W.fmt StringCvt.DEC a
+                                                 ^ " x")) of
+                        NONE => false
+                      | SOME (v, rest) =>
+                          v = a andalso Substring.string rest = " x"),
+
+        (* The Discussion writes the conversions out as compositions through
+         * the large types; both sides may overflow, and must do so together. *)
+        P.forAll ("fromInt goes through LargeWord and LargeInt",
+                  G.int (~10000, 10000), Show.int,
+                  fn n =>
+                    W.fromInt n
+                    = W.fromLarge (LargeWord.fromLargeInt (Int.toLarge n))),
+
+        P.forAll ("toInt and toIntX go through LargeWord and LargeInt",
+                  genW, showW,
+                  fn a =>
+                    let
+                      fun outcome f = SOME (f ()) handle Overflow => NONE
+                    in
+                      outcome (fn () => W.toInt a)
+                      = outcome (fn () =>
+                          Int.fromLarge (LargeWord.toLargeInt (W.toLarge a)))
+                      andalso
+                      outcome (fn () => W.toIntX a)
+                      = outcome (fn () =>
+                          Int.fromLarge (LargeWord.toLargeIntX (W.toLargeX a)))
+                    end)
       ])
   end
 
@@ -248,6 +411,70 @@ functor IntegerInstanceTestsFn (structure I : INTEGER
               in A.that "the bounds are symmetric to within one"
                         (s = i 0 orelse s = i ~1)
               end))),
+
+        (* "If precision is SOME(n), then we have minInt = -2^(n-1) and
+         * maxInt = 2^(n-1) - 1." *)
+        Case ("precision fixes the bounds", fn () =>
+          if not fixed then ()
+          else
+            let
+              val n = valOf I.precision
+              fun ones (0, acc) = acc
+                | ones (k, acc) = ones (k - 1, I.+ (I.* (acc, i 2), i 1))
+              val expectedMax = ones (n - 2, i 1)
+            in
+              eqI "maxInt = 2^(precision-1) - 1" (expectedMax, valOf I.maxInt);
+              eqI "minInt = ~(2^(precision-1))"
+                (I.- (I.~ expectedMax, i 1), valOf I.minInt)
+            end),
+
+        (* "These convert between integer values of types int and
+         * LargeInt.int.  The latter raises Overflow if the value does not
+         * fit", and likewise for toInt and fromInt.  Only checkable where the
+         * other type is genuinely wider. *)
+        Case ("fromLarge raises Overflow on a value that does not fit",
+          fn () =>
+            case I.maxInt of
+                NONE => ()
+              | SOME m =>
+                  let
+                    val lm = I.toLarge m
+                    val largeIsWider =
+                      case LargeInt.maxInt of
+                          NONE => true
+                        | SOME lmax => LargeInt.> (lmax, lm)
+                  in
+                    if not largeIsWider then ()
+                    else
+                      (A.raises "just past maxInt" A.isOverflow
+                         (fn () => I.fromLarge (LargeInt.+ (lm, 1)));
+                       A.raises "just past minInt" A.isOverflow
+                         (fn () =>
+                            I.fromLarge
+                              (LargeInt.- (I.toLarge (valOf I.minInt), 1))))
+                  end),
+
+        Case ("toInt raises Overflow on a value that does not fit", fn () =>
+          case (Int.maxInt, Int.minInt) of
+              (SOME imax, SOME imin) =>
+                let
+                  val thisIsWider =
+                    case I.maxInt of
+                        NONE => true
+                      | SOME m => LargeInt.> (I.toLarge m, Int.toLarge imax)
+                in
+                  if not thisIsWider then ()
+                  else
+                    (A.raises "just past Int.maxInt" A.isOverflow
+                       (fn () =>
+                          I.toInt (I.fromLarge
+                                     (LargeInt.+ (Int.toLarge imax, 1))));
+                     A.raises "just past Int.minInt" A.isOverflow
+                       (fn () =>
+                          I.toInt (I.fromLarge
+                                     (LargeInt.- (Int.toLarge imin, 1)))))
+                end
+            | _ => ()),
 
         Case ("arithmetic", fn () =>
           (eqI "addition" (i 5, I.+ (i 2, i 3));
@@ -383,7 +610,60 @@ functor IntegerInstanceTestsFn (structure I : INTEGER
                   fn a => I.fromLarge (I.toLarge a) = a),
 
         P.forAll ("int round trips", G.int (~10000, 10000), Show.int,
-                  fn n => I.toInt (I.fromInt n) = n)
+                  fn n => I.toInt (I.fromInt n) = n),
+
+        P.forAll ("toString is fmt DEC", genI, showI,
+                  fn a => I.toString a = I.fmt StringCvt.DEC a),
+
+        P.forAll ("fromString is scanString of scan DEC",
+                  G.oneOf [ G.map (fn a => I.toString a) genI,
+                            G.printableString ],
+                  Show.string,
+                  fn s =>
+                    let
+                      fun outcome f = SOME (f ()) handle Overflow => NONE
+                    in
+                      outcome (fn () => I.fromString s)
+                      = outcome (fn () =>
+                          StringCvt.scanString (I.scan StringCvt.DEC) s)
+                    end),
+
+        P.forAll ("negation is subtraction from zero", genI, showI,
+                  fn a => I.~ a = I.- (i 0, a)),
+
+        P.forAll ("abs is the magnitude", genI, showI,
+                  fn a => I.abs a = (if I.< (a, i 0) then I.~ a else a)),
+
+        P.forAll ("min and max choose an argument and bracket both",
+                  pairI, showPair,
+                  fn (a, b) =>
+                    let
+                      val lo = I.min (a, b)
+                      val hi = I.max (a, b)
+                    in
+                      I.<= (lo, a) andalso I.<= (lo, b)
+                      andalso I.>= (hi, a) andalso I.>= (hi, b)
+                      andalso (lo = a orelse lo = b)
+                      andalso (hi = a orelse hi = b)
+                    end),
+
+        P.forAll ("sameSign is equality of signs", pairI, showPair,
+                  fn (a, b) => I.sameSign (a, b) = (I.sign a = I.sign b)),
+
+        P.forAll ("div and quot agree when the signs agree",
+                  G.pair (genI, nonZero), showPair,
+                  fn (a, b) =>
+                    P.implies (I.sameSign (a, b),
+                               I.div (a, b) = I.quot (a, b))),
+
+        P.forAll ("scan skips leading whitespace and reports the remainder",
+                  genI, showI,
+                  fn a =>
+                    case I.scan StringCvt.DEC Substring.getc
+                                (Substring.full ("  " ^ I.toString a ^ " x")) of
+                        NONE => false
+                      | SOME (v, rest) =>
+                          v = a andalso Substring.string rest = " x")
       ])
   end
 
