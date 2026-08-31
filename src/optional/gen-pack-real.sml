@@ -156,6 +156,26 @@ functor PackRealTestsFn (structure Big : PACK_REAL
             eqR "and the first one still holds" (r 9, Big.subArr (a, 1))
           end),
 
+        (* "bytesPerElem: The number of bytes per element, sufficient to
+         * store a value of type real." *)
+        Case ("an element is wide enough for the real it holds", fn () =>
+          A.that ("bytesPerElem = " ^ Int.toString n
+                  ^ " must cover R.precision = " ^ Int.toString R.precision)
+                 (8 * n >= R.precision)),
+
+        Case ("a partial element cannot be read", fn () =>
+          let
+            val short = W8V.fromList (List.tl (vlist (Big.toBytes (r 1))))
+            val shortArr = zeros (n - 1)
+          in
+            A.raises "subVec of a short vector" A.isSubscript
+              (fn () => Big.subVec (short, A.hide 0));
+            A.raises "subArr of a short array" A.isSubscript
+              (fn () => Big.subArr (shortArr, A.hide 0));
+            A.raises "update into a short array" A.isSubscript
+              (fn () => Big.update (shortArr, A.hide 0, r 1))
+          end),
+
         Case ("update out of range raises Subscript", fn () =>
           let
             val a = zeros n

@@ -159,6 +159,17 @@ functor IntInfTestsFn (C : TEST_CONFIG) =
            eqI "xorb of a negative and a positive" (i ~4, II.xorb (i ~2, i 2));
            eqI "notb of minus one" (zero, II.notb (i ~1)))),
 
+        (* "If an implementation provides the IntInf structure, then the type
+         * LargeInt.int must be the same as the type IntInf.int."  This only
+         * has to compile. *)
+        Case ("IntInf.int is LargeInt.int", fn () =>
+          let
+            val toLarge : IntInf.int -> LargeInt.int = fn x => x
+            val fromLarge : LargeInt.int -> IntInf.int = fn x => x
+          in
+            eqI "the two types are the same" (i 42, fromLarge (toLarge (i 42)))
+          end),
+
         Case ("bitwise operations reach past any fixed width", fn () =>
           let
             val hi = pow2 200
@@ -276,6 +287,22 @@ functor IntInfTestsFn (C : TEST_CONFIG) =
         P.forAll ("log2 of a power of two is its exponent", G.int (0, 300),
                   Show.int,
                   fn k => II.log2 (pow2 k) = k),
+
+        (* The Discussion: "if we let bit = 2^n, we have, for all sufficiently
+         * large values of n, andb(i, bit) = 0 if i >= 0 and
+         * andb(i, bit) = bit if i < 0." *)
+        P.forAll ("a high bit reports the sign", genBig, showI,
+                  fn a =>
+                    let
+                      (* "for all sufficiently large values of n": beyond the
+                       * magnitude of the value itself. *)
+                      val n =
+                        if a = zero then 4 else II.log2 (II.abs a) + 4
+                      val bit = pow2 n
+                    in
+                      II.andb (a, bit)
+                      = (if II.>= (a, zero) then zero else bit)
+                    end),
 
         P.forAll ("notb is the negated successor", genBig, showI,
                   fn a => II.notb a = II.~ (II.+ (a, one))),

@@ -412,6 +412,47 @@ functor Array2TestsFn (C : TEST_CONFIG) =
         P.forAll ("dimensions agrees with nRows and nCols", genArray, showA,
                   fn a => A2.dimensions a = (A2.nRows a, A2.nCols a)),
 
+        (* "the expression app tr f arr is equivalent to
+         *   appi tr (f o #3) {base=arr,row=0,col=0,nrows=NONE,ncols=NONE}",
+         * and the analogous equivalences for fold and modify. *)
+        P.forAll ("the plain traversals are the indexed ones over the whole array",
+                  genArray, showA,
+                  fn a =>
+                    let
+                      fun whole arr = { base = arr, row = 0, col = 0,
+                                        nrows = NONE, ncols = NONE }
+                      fun seen f arr =
+                        let val acc = ref []
+                        in f (fn x => acc := x :: !acc) arr; List.rev (!acc) end
+                      val plain = seen (fn g => fn arr => A2.app A2.RowMajor g arr) a
+                      val indexed =
+                        let val acc = ref []
+                        in
+                          A2.appi A2.RowMajor
+                                  ((fn x => acc := x :: !acc) o #3) (whole a);
+                          List.rev (!acc)
+                        end
+                      val f = fn (x, acc) => acc ^ Int.toString x
+                      val folded = A2.fold A2.RowMajor f "z" a
+                      val foldedI =
+                        A2.foldi A2.RowMajor (fn (_, _, x, acc) => f (x, acc))
+                                 "z" (whole a)
+                      val b = A2.tabulate A2.RowMajor
+                                (A2.nRows a, A2.nCols a,
+                                 fn (i, j) => A2.sub (a, i, j))
+                      val c = A2.tabulate A2.RowMajor
+                                (A2.nRows a, A2.nCols a,
+                                 fn (i, j) => A2.sub (a, i, j))
+                      val g = fn x => x * 2 + 1
+                    in
+                      A2.modify A2.RowMajor g b;
+                      A2.modifyi A2.RowMajor (g o #3) (whole c);
+                      plain = indexed
+                      andalso folded = foldedI
+                      andalso A2.fold A2.RowMajor (op ::) [] b
+                              = A2.fold A2.RowMajor (op ::) [] c
+                    end),
+
         P.forAll ("update is visible through sub", genIndexed, showIndexed,
                   fn (nr, nc, r, c) =>
                     let val a = grid (nr, nc)
