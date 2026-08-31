@@ -98,6 +98,34 @@ signature TEST_CONFIG =
      * therefore off, and the individual directions are tested regardless. *)
     val canPollBothDirections : bool
 
+    (* --- strings ----------------------------------------------------- *)
+
+    (* String.extract may be called with an index close to Int.maxInt.  The
+     * Basis requires the bounds check to raise Subscript without going
+     * through an overflowing addition, so this ought to be an ordinary test;
+     * it is behind a flag because SML/NJ 2026.1 does not raise anything -- it
+     * dies with "Fatal error -- bogus overflow fault", taking the rest of the
+     * run with it.  The same check on substring and on the Substring
+     * operations is safe everywhere and is made unconditionally. *)
+    val canExtractAtHugeIndex : bool
+
+    (* OS.Process.sleep returns immediately when given a zero or negative
+     * time, as the specification requires.  Behind a flag because SML/NJ
+     * 2026.1 does not return at all for a negative argument: the process
+     * blocks forever and the run has to be killed, which is worse than a
+     * crash.  A zero sleep is tested unconditionally. *)
+    val negativeSleepReturns : bool
+
+    (* --- dates ------------------------------------------------------- *)
+
+    (* Date.fmt is safe to call with the time-zone directive "%Z".  This is
+     * separate from the rest of Date because Poly/ML 5.7.1 does not merely
+     * get it wrong -- formatting "%Z" for a date carrying an explicit offset
+     * corrupts the heap and the run dies with a segmentation fault some time
+     * later, taking every remaining test with it.  The default is therefore
+     * off; every other directive is tested regardless. *)
+    val dateFmtHandlesZone : bool
+
     (* --- time -------------------------------------------------------- *)
 
     (* The granularity of Time.time, in nanoseconds.  The Basis fixes the
@@ -133,6 +161,10 @@ structure ConfigUnix : TEST_CONFIG =
     val hasPollingIO = true
     val canPollBothDirections = false
 
+    val canExtractAtHugeIndex = false
+    val negativeSleepReturns = false
+    val dateFmtHandlesZone = false
+
     val timeResolutionNanos = 1000
   end
 
@@ -161,4 +193,7 @@ structure ConfigMinimal : TEST_CONFIG =
     val canSpawnProcesses = false
     val hasPollingIO = false
     val canPollBothDirections = false
+    val canExtractAtHugeIndex = false
+    val negativeSleepReturns = false
+    val dateFmtHandlesZone = false
   end
