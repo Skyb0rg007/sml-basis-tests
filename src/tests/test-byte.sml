@@ -73,6 +73,36 @@ functor ByteTestsFn (C : TEST_CONFIG) =
               Byte.packString (arr, 1, Substring.full "AB");
               eqBL "written at the offset"
                 ([b 0, b 65, b 66, b 0], alist arr)
+            end),
+
+          (* "It raises Subscript if i < 0 or size s + i > |arr|." *)
+          Case ("packString checks its bounds", fn () =>
+            let
+              val arr = W8A.array (4, b 0)
+            in
+              A.raises "negative offset" A.isSubscript
+                (fn () => Byte.packString (arr, A.hide ~1, Substring.full "A"));
+              A.raises "past the end" A.isSubscript
+                (fn () => Byte.packString (arr, A.hide 3, Substring.full "AB"));
+              A.noRaise "exactly filling the array"
+                (fn () => Byte.packString (arr, 0, Substring.full "ABCD"));
+              A.noRaise "an empty substring at the very end"
+                (fn () => Byte.packString (arr, 4, Substring.full ""))
+            end),
+
+          (* "unpackStringVec slice returns the string consisting of
+           * characters whose codes are held in the vector slice." *)
+          Case ("unpacking a whole sequence is bytesToString", fn () =>
+            let
+              val v = Byte.stringToBytes "ABCD"
+              val arr = W8A.tabulate (4, fn i => W8V.sub (v, i))
+            in
+              A.eqString "the vector slice"
+                (Byte.bytesToString v,
+                 Byte.unpackStringVec (Word8VectorSlice.full v));
+              A.eqString "the array slice"
+                (Byte.bytesToString v,
+                 Byte.unpackString (Word8ArraySlice.full arr))
             end)
         ]),
 
@@ -242,7 +272,59 @@ functor ByteTestsFn (C : TEST_CONFIG) =
                     G.pair (bytes, bytes), Show.pair (showBytes, showBytes),
                     fn (x, y) =>
                       W8V.collate W8.compare (x, y)
-                      = List.collate W8.compare (vlist x, vlist y))
+                      = List.collate W8.compare (vlist x, vlist y)),
+
+          (* The specification writes the two conversions out as tabulations,
+           * "although one expects actual implementations will be more
+           * efficient". *)
+          P.forAll ("bytesToString is the tabulation the specification gives",
+                    bytes, showBytes,
+                    fn v =>
+                      Byte.bytesToString v
+                      = CharVector.tabulate
+                          (W8V.length v,
+                           fn i => Byte.byteToChar (W8V.sub (v, i)))),
+
+          P.forAll ("stringToBytes is the tabulation the specification gives",
+                    str, showS,
+                    fn s =>
+                      Byte.stringToBytes s
+                      = W8V.tabulate (String.size s,
+                                      fn i => Byte.charToByte (String.sub (s, i)))),
+
+          P.forAll ("unpacking a slice reads just that window",
+                    G.bind str (fn s =>
+                      G.bind (G.int (0, String.size s)) (fn i =>
+                        G.map (fn n => (s, i, n))
+                              (G.int (0, String.size s - i)))),
+                    Show.triple (showS, Show.int, Show.int),
+                    fn (s, i, n) =>
+                      let
+                        val v = Byte.stringToBytes s
+                        val arr = W8A.tabulate (W8V.length v,
+                                                fn k => W8V.sub (v, k))
+                        val window = String.substring (s, i, n)
+                      in
+                        Byte.unpackStringVec (Word8VectorSlice.slice (v, i, SOME n))
+                        = window
+                        andalso Byte.unpackString
+                                  (Word8ArraySlice.slice (arr, i, SOME n))
+                                = window
+                      end),
+
+          P.forAll ("packString writes the substring at the offset",
+                    G.bind str (fn s =>
+                      G.map (fn k => (s, k)) (G.int (0, 3))),
+                    Show.pair (showS, Show.int),
+                    fn (s, k) =>
+                      let
+                        val a = W8A.array (String.size s + k, b 0)
+                      in
+                        Byte.packString (a, k, Substring.full s);
+                        alist a
+                        = List.tabulate (k, fn _ => b 0)
+                          @ List.map Byte.charToByte (String.explode s)
+                      end)
         ])
       ])
   end

@@ -90,7 +90,32 @@ functor StringCvtTestsFn (C : TEST_CONFIG) =
            * scanner that insists on reaching the end. *)
           Case ("trailing input is ignored", fn () =>
             A.eqIntOption "integer then junk"
-              (SOME 42, StringCvt.scanString (Int.scan StringCvt.DEC) "42abc"))
+              (SOME 42, StringCvt.scanString (Int.scan StringCvt.DEC) "42abc")),
+
+          (* "splitl can be used with scanning functions such as scanString by
+           * composing it with SOME; e.g.,
+           * scanString (fn rdr => SOME o (splitl f rdr))." *)
+          Case ("the documented way to use splitl with scanString", fn () =>
+            A.eqStringOption "the alphabetic prefix"
+              (SOME "abc",
+               StringCvt.scanString
+                 (fn rdr => SOME o (StringCvt.splitl Char.isAlpha rdr))
+                 "abc123")),
+
+          (* "When the input source is a list of characters, scanning values
+           * can be accomplished by applying the appropriate scan function to
+           * the function List.getItem." *)
+          Case ("a reader over a list of characters", fn () =>
+            (case Int.scan StringCvt.DEC List.getItem (String.explode "42rest") of
+                 NONE => A.fail "scanning an int from a char list returned NONE"
+               | SOME (n, rest) =>
+                   (A.eqInt "value" (42, n);
+                    A.eqCharList "remainder" ([#"r", #"e", #"s", #"t"], rest));
+             case Bool.scan List.getItem (String.explode "true!") of
+                 NONE => A.fail "scanning a bool from a char list returned NONE"
+               | SOME (b, rest) =>
+                   (A.eqBool "value" (true, b);
+                    A.eqCharList "remainder" ([#"!"], rest))))
         ]),
 
         Group ("radix and rounding modes are distinct values",
@@ -163,7 +188,44 @@ functor StringCvtTestsFn (C : TEST_CONFIG) =
                       end),
 
           P.forAll ("skipWS only removes a prefix", str, showS,
-                    fn s => String.isSuffix (restOf (onString StringCvt.skipWS s)) s)
+                    fn s => String.isSuffix (restOf (onString StringCvt.skipWS s)) s),
+
+          (* "It is equivalent to dropl Char.isSpace." *)
+          P.forAll ("skipWS is dropl of Char.isSpace", str, showS,
+                    fn s =>
+                      restOf (onString StringCvt.skipWS s)
+                      = restOf (onString (StringCvt.dropl Char.isSpace) s)),
+
+          (* "These return s padded, on the left or right, respectively, with
+           * i - |s| copies of the character c." *)
+          P.forAll ("padding adds exactly the missing characters",
+                    G.pair (str, G.int (~2, 20)), Show.pair (showS, Show.int),
+                    fn (s, n) =>
+                      let
+                        val fill =
+                          String.implode
+                            (List.tabulate (Int.max (0, n - String.size s),
+                                            fn _ => #"."))
+                      in
+                        StringCvt.padLeft #"." n s = fill ^ s
+                        andalso StringCvt.padRight #"." n s = s ^ fill
+                      end),
+
+          P.forAll ("a reader over a character list agrees with one over a substring",
+                    G.map Int.toString G.anyInt, showS,
+                    fn s =>
+                      let
+                        val viaList =
+                          Option.map (fn (n, rest) => (n, String.implode rest))
+                            (Int.scan StringCvt.DEC List.getItem
+                                      (String.explode s))
+                        val viaSubstring =
+                          Option.map (fn (n, rest) => (n, Substring.string rest))
+                            (Int.scan StringCvt.DEC Substring.getc
+                                      (Substring.full s))
+                      in
+                        viaList = viaSubstring
+                      end)
         ])
       ])
   end

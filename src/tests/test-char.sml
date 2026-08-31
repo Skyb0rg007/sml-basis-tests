@@ -20,6 +20,53 @@ functor CharTestsFn (C : TEST_CONFIG) =
 
     val eqCharOpt = A.eqBy (op =, Show.option Show.char)
 
+    (* The specification writes toString and toCString out as a table; these
+     * are that table, so that the properties below can check every character
+     * rather than the handful a unit test can name. *)
+    fun controlEscape i =
+      if i = 7 then SOME "\\a"
+      else if i = 8 then SOME "\\b"
+      else if i = 9 then SOME "\\t"
+      else if i = 10 then SOME "\\n"
+      else if i = 11 then SOME "\\v"
+      else if i = 12 then SOME "\\f"
+      else if i = 13 then SOME "\\r"
+      else NONE
+
+    fun specToString c =
+      let
+        val i = Char.ord c
+      in
+        if c = #"\\" then "\\\\"
+        else if c = #"\"" then "\\\""
+        else case controlEscape i of
+                 SOME e => e
+               | NONE =>
+                   if i < 32 then "\\^" ^ String.str (Char.chr (i + 64))
+                   else if i <= 126 then String.str c
+                   else if i < 1000 then
+                     "\\" ^ StringCvt.padLeft #"0" 3 (Int.toString i)
+                   else
+                     "\\u" ^ StringCvt.padLeft #"0" 4
+                               (Int.fmt StringCvt.HEX i)
+      end
+
+    fun specToCString c =
+      let
+        val i = Char.ord c
+      in
+        if c = #"\\" then "\\\\"
+        else if c = #"\"" then "\\\""
+        else if c = #"?" then "\\?"
+        else if c = #"'" then "\\'"
+        else case controlEscape i of
+                 SOME e => e
+               | NONE =>
+                   if i >= 32 andalso i <= 126 then String.str c
+                   else "\\" ^ StringCvt.padLeft #"0" 3
+                                 (Int.fmt StringCvt.OCT i)
+      end
+
     val suite = Group ("Char",
       [ Group ("the character set",
         [ Case ("maxOrd is at least 255", fn () =>
@@ -216,6 +263,111 @@ functor CharTestsFn (C : TEST_CONFIG) =
             A.that "an empty source"
               (not (isSome (Char.scan Substring.getc (Substring.full ""))))),
 
+          (* "The common control characters are converted to two-character
+           * escape sequences" -- the whole table, not a sample of it. *)
+          Case ("toString converts every named control character", fn () =>
+            (A.eqString "alert" ("\\a", Char.toString (Char.chr 7));
+             A.eqString "backspace" ("\\b", Char.toString (Char.chr 8));
+             A.eqString "tab" ("\\t", Char.toString (Char.chr 9));
+             A.eqString "newline" ("\\n", Char.toString (Char.chr 10));
+             A.eqString "vertical tab" ("\\v", Char.toString (Char.chr 11));
+             A.eqString "form feed" ("\\f", Char.toString (Char.chr 12));
+             A.eqString "carriage return" ("\\r", Char.toString (Char.chr 13)))),
+
+          (* "The remaining characters whose codes are less than 32 are
+           * represented by three-character strings in control character
+           * notation, e.g., #"\000" maps to "\^@", #"\001" maps to "\^A"." *)
+          Case ("toString uses control notation below 32", fn () =>
+            (A.eqString "nul" ("\\^@", Char.toString (Char.chr 0));
+             A.eqString "code 1" ("\\^A", Char.toString (Char.chr 1));
+             A.eqString "code 26" ("\\^Z", Char.toString (Char.chr 26));
+             A.eqString "code 31" ("\\^_", Char.toString (Char.chr 31)))),
+
+          (* "All other characters (i.e., those whose codes are greater than
+           * 126 but less than 1000) are mapped to four-character strings of
+           * the form "\ddd"." *)
+          Case ("toString uses three decimal digits above 126", fn () =>
+            (A.eqString "delete" ("\\127", Char.toString (Char.chr 127));
+             A.eqString "code 128" ("\\128", Char.toString (Char.chr 128));
+             A.eqString "code 255" ("\\255", Char.toString (Char.chr 255)))),
+
+          (* The samples the specification tabulates for fromString. *)
+          Case ("the sample conversions from the specification", fn () =>
+            (eqCharOpt "a backslash and a letter" (NONE, Char.fromString "\\q");
+             eqCharOpt "a letter then a control character"
+               (SOME #"a", Char.fromString "a\^D");
+             eqCharOpt "a letter then an escaped formatting sequence"
+               (SOME #"a", Char.fromString "a\\ \\\\q");
+             eqCharOpt "an escaped formatting sequence alone"
+               (NONE, Char.fromString "\\ \\");
+             eqCharOpt "the empty string" (NONE, Char.fromString "");
+             eqCharOpt "a formatting sequence then a control character"
+               (NONE, Char.fromString "\\ \\\^D");
+             eqCharOpt "an unterminated formatting sequence"
+               (NONE, Char.fromString "\\ a"))),
+
+          Case ("fromString reads every escape the grammar allows", fn () =>
+            (eqCharOpt "alert" (SOME (Char.chr 7), Char.fromString "\\a");
+             eqCharOpt "backspace" (SOME (Char.chr 8), Char.fromString "\\b");
+             eqCharOpt "vertical tab" (SOME (Char.chr 11), Char.fromString "\\v");
+             eqCharOpt "form feed" (SOME (Char.chr 12), Char.fromString "\\f");
+             eqCharOpt "carriage return" (SOME (Char.chr 13), Char.fromString "\\r");
+             eqCharOpt "double quote" (SOME #"\"", Char.fromString "\\\"");
+             eqCharOpt "control escape at the bottom of the range"
+               (SOME (Char.chr 0), Char.fromString "\\^@");
+             eqCharOpt "control escape" (SOME (Char.chr 8), Char.fromString "\\^H");
+             eqCharOpt "control escape at the top of the range"
+               (SOME (Char.chr 31), Char.fromString "\\^_");
+             eqCharOpt "decimal escape" (SOME (Char.chr 255), Char.fromString "\\255");
+             eqCharOpt "hexadecimal escape"
+               (SOME #"A", Char.fromString "\\u0041"))),
+
+          (* "In the escape sequences involving decimal or hexadecimal digits,
+           * if the resulting value cannot be represented in the character
+           * set, NONE is returned." *)
+          Case ("fromString rejects an escape outside the character set",
+            fn () =>
+              if maxOrd >= 999 then ()
+              else
+                (eqCharOpt "decimal 999" (NONE, Char.fromString "\\999");
+                 eqCharOpt "hexadecimal FFFF" (NONE, Char.fromString "\\uFFFF"))),
+
+          Case ("fromString rejects a non-printable first character", fn () =>
+            (eqCharOpt "a control character"
+               (NONE, Char.fromString (String.str (Char.chr 4)));
+             eqCharOpt "a newline"
+               (NONE, Char.fromString "\n"))),
+
+          Case ("fromString rejects a malformed control escape", fn () =>
+            (eqCharOpt "below the range" (NONE, Char.fromString "\\^?");
+             eqCharOpt "above the range" (NONE, Char.fromString "\\^a");
+             eqCharOpt "too few decimal digits" (NONE, Char.fromString "\\12");
+             eqCharOpt "too few hexadecimal digits"
+               (NONE, Char.fromString "\\u41"))),
+
+          (* "escaped formatting sequences (\f...f\) are passed over during
+           * scanning.  Such sequences are successfully scanned, so that the
+           * remaining stream returned by scan will never have a valid escaped
+           * formatting sequence as its prefix." *)
+          Case ("scan passes over an escaped formatting sequence", fn () =>
+            (case Char.scan Substring.getc (Substring.full "\\ \\ab") of
+                 NONE => A.fail "a leading formatting sequence stopped the scan"
+               | SOME (c, rest) =>
+                   (A.eqChar "the character after it" (#"a", c);
+                    A.eqString "the remainder" ("b", Substring.string rest));
+             case Char.scan Substring.getc (Substring.full "a\\ \\b") of
+                 NONE => A.fail "scan returned NONE"
+               | SOME (c, rest) =>
+                   (A.eqChar "the character" (#"a", c);
+                    A.eqString "the remainder has no formatting escape left"
+                      ("b", Substring.string rest));
+             case Char.scan Substring.getc
+                            (Substring.full "\\\n\t \\Z") of
+                 NONE => A.fail "a multi-character formatting sequence stopped the scan"
+               | SOME (c, rest) =>
+                   (A.eqChar "the character after it" (#"Z", c);
+                    A.eqString "the remainder" ("", Substring.string rest)))),
+
           Case ("toCString uses C escapes", fn () =>
             (A.eqString "newline" ("\\n", Char.toCString #"\n");
              A.eqString "backslash" ("\\\\", Char.toCString #"\\");
@@ -224,7 +376,74 @@ functor CharTestsFn (C : TEST_CONFIG) =
           Case ("fromCString reads C escapes", fn () =>
             (eqCharOpt "newline" (SOME #"\n", Char.fromCString "\\n");
              eqCharOpt "octal escape" (SOME #"A", Char.fromCString "\\101");
-             eqCharOpt "letter" (SOME #"a", Char.fromCString "a")))
+             eqCharOpt "letter" (SOME #"a", Char.fromCString "a"))),
+
+          (* "printable characters, except for #"\\", #"\"", #"?", and #"'"
+           * are left unchanged", and everything else that is not one of the
+           * named control characters becomes three octal digits. *)
+          Case ("toCString escapes the four C-specific characters", fn () =>
+            (A.eqString "question mark" ("\\?", Char.toCString #"?");
+             A.eqString "single quote" ("\\'", Char.toCString #"'");
+             A.eqString "double quote" ("\\\"", Char.toCString #"\"");
+             A.eqString "backslash" ("\\\\", Char.toCString #"\\"))),
+
+          Case ("toCString uses three octal digits elsewhere", fn () =>
+            (A.eqString "nul" ("\\000", Char.toCString (Char.chr 0));
+             A.eqString "code 1" ("\\001", Char.toCString (Char.chr 1));
+             A.eqString "escape" ("\\033", Char.toCString (Char.chr 27));
+             A.eqString "delete" ("\\177", Char.toCString (Char.chr 127));
+             A.eqString "code 255" ("\\377", Char.toCString (Char.chr 255)))),
+
+          Case ("toCString converts every named control character", fn () =>
+            (A.eqString "alert" ("\\a", Char.toCString (Char.chr 7));
+             A.eqString "backspace" ("\\b", Char.toCString (Char.chr 8));
+             A.eqString "tab" ("\\t", Char.toCString (Char.chr 9));
+             A.eqString "newline" ("\\n", Char.toCString (Char.chr 10));
+             A.eqString "vertical tab" ("\\v", Char.toCString (Char.chr 11));
+             A.eqString "form feed" ("\\f", Char.toCString (Char.chr 12));
+             A.eqString "carriage return" ("\\r", Char.toCString (Char.chr 13)))),
+
+          Case ("fromCString reads the C escape table", fn () =>
+            (eqCharOpt "alert" (SOME (Char.chr 7), Char.fromCString "\\a");
+             eqCharOpt "backspace" (SOME (Char.chr 8), Char.fromCString "\\b");
+             eqCharOpt "tab" (SOME (Char.chr 9), Char.fromCString "\\t");
+             eqCharOpt "vertical tab" (SOME (Char.chr 11), Char.fromCString "\\v");
+             eqCharOpt "form feed" (SOME (Char.chr 12), Char.fromCString "\\f");
+             eqCharOpt "carriage return" (SOME (Char.chr 13), Char.fromCString "\\r");
+             eqCharOpt "question mark" (SOME #"?", Char.fromCString "\\?");
+             eqCharOpt "single quote" (SOME #"'", Char.fromCString "\\'");
+             eqCharOpt "double quote" (SOME #"\"", Char.fromCString "\\\"");
+             eqCharOpt "backslash" (SOME #"\\", Char.fromCString "\\\\");
+             eqCharOpt "control escape" (SOME (Char.chr 8), Char.fromCString "\\^H"))),
+
+          (* "\ooo consists of one to three octal digits" and "\xhh, where hh
+           * is a sequence of hexadecimal digits", with "the sequence of
+           * digits ... taken to be the longest sequence of such
+           * characters". *)
+          Case ("fromCString reads octal and hexadecimal escapes", fn () =>
+            (eqCharOpt "one octal digit" (SOME (Char.chr 1), Char.fromCString "\\1");
+             eqCharOpt "two octal digits" (SOME (Char.chr 10), Char.fromCString "\\12");
+             eqCharOpt "three octal digits"
+               (SOME (Char.chr 255), Char.fromCString "\\377");
+             eqCharOpt "the longest octal run wins"
+               (SOME (Char.chr 8), Char.fromCString "\\10");
+             eqCharOpt "hexadecimal" (SOME #"A", Char.fromCString "\\x41");
+             eqCharOpt "lower-case hexadecimal"
+               (SOME (Char.chr 255), Char.fromCString "\\xff"))),
+
+          Case ("fromCString rejects what C does not allow", fn () =>
+            (eqCharOpt "an unknown escape" (NONE, Char.fromCString "\\q");
+             eqCharOpt "the empty string" (NONE, Char.fromCString "");
+             eqCharOpt "a non-printable character"
+               (NONE, Char.fromCString (String.str (Char.chr 4))))),
+
+          (* "Note that fromCString accepts an unescaped single quote
+           * character, but does not accept an unescaped double quote
+           * character." *)
+          Case ("fromCString accepts a bare quote only in the single case",
+            fn () =>
+              (eqCharOpt "single quote" (SOME #"'", Char.fromCString "'");
+               eqCharOpt "double quote" (NONE, Char.fromCString "\"")))
         ]),
 
         Group ("laws",
@@ -313,6 +532,80 @@ functor CharTestsFn (C : TEST_CONFIG) =
 
           P.forAll ("fromCString inverts toCString", G.char, Show.char,
                     fn c => Char.fromCString (Char.toCString c) = SOME c),
+
+          (* The Discussion fixes each predicate as a range test on the
+           * character code; Char is locale-independent, so this is the
+           * definition and not merely a consequence of one. *)
+          P.forAll ("the predicates have the definitions the Discussion gives",
+                    G.asciiChar, Show.char,
+                    fn c =>
+                      Char.isUpper c = (#"A" <= c andalso c <= #"Z")
+                      andalso Char.isLower c = (#"a" <= c andalso c <= #"z")
+                      andalso Char.isDigit c = (#"0" <= c andalso c <= #"9")
+                      andalso Char.isAlpha c = (Char.isUpper c orelse Char.isLower c)
+                      andalso Char.isAlphaNum c
+                              = (Char.isAlpha c orelse Char.isDigit c)
+                      andalso Char.isHexDigit c
+                              = (Char.isDigit c
+                                 orelse (#"a" <= c andalso c <= #"f")
+                                 orelse (#"A" <= c andalso c <= #"F"))
+                      andalso Char.isGraph c = (#"!" <= c andalso c <= #"~")
+                      andalso Char.isPrint c = (Char.isGraph c orelse c = #" ")
+                      andalso Char.isPunct c
+                              = (Char.isGraph c andalso not (Char.isAlphaNum c))
+                      andalso Char.isCntrl c
+                              = (Char.isAscii c andalso not (Char.isPrint c))
+                      andalso Char.isSpace c
+                              = ((#"\t" <= c andalso c <= #"\r") orelse c = #" ")
+                      andalso Char.isAscii c
+                              = (0 <= Char.ord c andalso Char.ord c <= 127)),
+
+          P.forAll ("case conversion shifts by 32, as the Discussion gives",
+                    G.asciiChar, Show.char,
+                    fn c =>
+                      Char.toLower c
+                      = (if Char.isUpper c then Char.chr (Char.ord c + 32) else c)
+                      andalso Char.toUpper c
+                              = (if Char.isLower c then Char.chr (Char.ord c - 32)
+                                 else c)),
+
+          P.forAll ("isAscii is a test on the code, at any width",
+                    G.char, Show.char,
+                    fn c => Char.isAscii c = (Char.ord c <= 127)),
+
+          (* toString and toCString are tabulated in the specification; these
+           * check the table entry for every character, not a sample. *)
+          P.forAll ("toString follows the specification's table",
+                    G.map Char.chr (G.int (0, Int.min (maxOrd, 999))), Show.char,
+                    fn c => Char.toString c = specToString c),
+
+          P.forAll ("toCString follows the specification's table",
+                    G.map Char.chr (G.int (0, Int.min (maxOrd, 255))), Show.char,
+                    fn c => Char.toCString c = specToCString c),
+
+          P.forAll ("scan reads back what toString wrote, and consumes it all",
+                    G.char, Show.char,
+                    fn c =>
+                      case Char.scan Substring.getc
+                                     (Substring.full (Char.toString c ^ "!")) of
+                          NONE => false
+                        | SOME (d, rest) =>
+                            d = c andalso Substring.string rest = "!"),
+
+          (* "The function fromString is equivalent to StringCvt.scanString
+           * scan." *)
+          P.forAll ("fromString is scanString scan",
+                    G.oneOf [ G.map Char.toString G.char,
+                              G.printableString ],
+                    Show.string,
+                    fn s =>
+                      Char.fromString s = StringCvt.scanString Char.scan s),
+
+          P.forAll ("succ and pred are chr of the neighbouring code",
+                    G.map Char.chr (G.int (1, maxOrd - 1)), Show.char,
+                    fn c =>
+                      Char.succ c = Char.chr (Char.ord c + 1)
+                      andalso Char.pred c = Char.chr (Char.ord c - 1)),
 
           P.forAll ("succ and pred are inverse in the interior",
                     G.map Char.chr (G.int (1, maxOrd - 1)), Show.char,

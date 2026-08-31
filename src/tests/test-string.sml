@@ -93,7 +93,47 @@ functor StringTestsFn (C : TEST_CONFIG) =
              A.eqString "starting at the end is legal"
                ("", String.extract ("abcde", 5, NONE));
              A.raises "past the end" A.isSubscript
-               (fn () => String.extract ("abcde", A.hide 6, NONE))))
+               (fn () => String.extract ("abcde", A.hide 6, NONE)))),
+
+          Case ("extract checks both bounds", fn () =>
+            (A.raises "negative start" A.isSubscript
+               (fn () => String.extract ("abcde", A.hide ~1, SOME 2));
+             A.raises "negative length" A.isSubscript
+               (fn () => String.extract ("abcde", A.hide 1, SOME (A.hide ~1)));
+             A.raises "start plus length past the end" A.isSubscript
+               (fn () => String.extract ("abcde", A.hide 3, SOME (A.hide 3)));
+             A.raises "negative start with no length" A.isSubscript
+               (fn () => String.extract ("abcde", A.hide ~1, NONE)))),
+
+          (* "Implementations of these functions must perform bounds checking
+           * in such a way that the Overflow exception is not raised." *)
+          Case ("bounds checking does not overflow", fn () =>
+            case Int.maxInt of
+                NONE => ()
+              | SOME big =>
+                  (A.raises "substring at a huge index" A.isSubscript
+                     (fn () => String.substring ("abcde", A.hide big, A.hide 1));
+                   A.raises "substring of a huge length" A.isSubscript
+                     (fn () => String.substring ("abcde", A.hide 1, A.hide big)))),
+
+          Case ("extract with an explicit length is substring", fn () =>
+            A.eqString "the same window"
+              (String.substring ("abcde", 1, 2),
+               String.extract ("abcde", 1, SOME 2)))
+        ]
+        (* The same bounds requirement for extract, which is where SML/NJ
+         * 2026.1 crashes the runtime rather than raising; see
+         * canExtractAtHugeIndex. *)
+        @ onlyIf (C.canExtractAtHugeIndex,
+                  "implementation not declared safe at an index near maxInt")
+        [ Case ("extract checks a huge index without overflowing", fn () =>
+            case Int.maxInt of
+                NONE => ()
+              | SOME big =>
+                  (A.raises "extract at a huge index" A.isSubscript
+                     (fn () => String.extract ("abcde", A.hide big, SOME (A.hide 1)));
+                   A.raises "extract of a huge length" A.isSubscript
+                     (fn () => String.extract ("abcde", A.hide 1, SOME (A.hide big)))))
         ]),
 
         Group ("searching and splitting",
@@ -108,6 +148,22 @@ functor StringTestsFn (C : TEST_CONFIG) =
             (A.eqBool "suffix" (true, String.isSuffix "bc" "abc");
              A.eqBool "empty suffix" (true, String.isSuffix "" "abc");
              A.eqBool "not a suffix" (false, String.isSuffix "ab" "abc"))),
+
+          (* "Note that the empty string is a prefix, substring, and suffix of
+           * any string, and that a string is a prefix, substring, and suffix
+           * of itself." *)
+          Case ("the empty string and the string itself are always found",
+            fn () =>
+              (A.eqBool "empty in empty, prefix" (true, String.isPrefix "" "");
+               A.eqBool "empty in empty, substring"
+                 (true, String.isSubstring "" "");
+               A.eqBool "empty in empty, suffix" (true, String.isSuffix "" "");
+               A.eqBool "a string is its own prefix"
+                 (true, String.isPrefix "abc" "abc");
+               A.eqBool "a string is its own substring"
+                 (true, String.isSubstring "abc" "abc");
+               A.eqBool "a string is its own suffix"
+                 (true, String.isSuffix "abc" "abc"))),
 
           Case ("isSubstring", fn () =>
             (A.eqBool "inside" (true, String.isSubstring "bc" "abcd");
@@ -126,6 +182,18 @@ functor StringTestsFn (C : TEST_CONFIG) =
                (["a", ""], String.fields comma "a,");
              A.eqStringList "the empty string is one empty field"
                ([""], String.fields comma ""))),
+
+          (* "if the only delimiter is the character #"|", then the string
+           * "|abc||def" contains two tokens "abc" and "def", whereas it
+           * contains the four fields "", "abc", "" and "def"." *)
+          Case ("the worked example from the specification", fn () =>
+            let
+              val bar = fn c => c = #"|"
+            in
+              A.eqStringList "tokens" (["abc", "def"], String.tokens bar "|abc||def");
+              A.eqStringList "fields"
+                (["", "abc", "", "def"], String.fields bar "|abc||def")
+            end),
 
           Case ("tokens discards empty fields", fn () =>
             (A.eqStringList "simple" (["a", "b"], String.tokens comma "a,b");
@@ -194,7 +262,48 @@ functor StringTestsFn (C : TEST_CONFIG) =
           Case ("toCString and fromCString", fn () =>
             (A.eqString "toCString" ("a\\nb", String.toCString "a\nb");
              A.eqStringOption "fromCString"
-               (SOME "a\nb", String.fromCString "a\\nb")))
+               (SOME "a\nb", String.fromCString "a\\nb"))),
+
+          (* The samples the specification tabulates for String.fromString.
+           * They differ from CHAR.fromString's: a prefix that scans to
+           * nothing still returns SOME "". *)
+          Case ("the sample conversions from the specification", fn () =>
+            (A.eqStringOption "an illegal escape" (NONE, String.fromString "\\q");
+             A.eqStringOption "a letter then a control character"
+               (SOME "a", String.fromString "a\^D");
+             A.eqStringOption "a letter then a formatting sequence"
+               (SOME "a", String.fromString "a\\ \\\\q");
+             A.eqStringOption "a formatting sequence alone"
+               (SOME "", String.fromString "\\ \\");
+             A.eqStringOption "the empty string" (SOME "", String.fromString "");
+             A.eqStringOption "a formatting sequence then a control character"
+               (SOME "", String.fromString "\\ \\\^D");
+             A.eqStringOption "an unterminated formatting sequence"
+               (NONE, String.fromString "\\ a");
+             A.eqStringOption "a lone control character"
+               (NONE, String.fromString "\^D"))),
+
+          (* "They do not skip leading whitespace."  A space is printable, so
+           * it is scanned like any other character; a tab is not, and since
+           * nothing at all can be scanned before it the result is NONE
+           * rather than SOME "". *)
+          Case ("fromString keeps leading whitespace", fn () =>
+            (A.eqStringOption "spaces are ordinary printable characters"
+               (SOME "  ab", String.fromString "  ab");
+             A.eqStringOption "a leading tab cannot be scanned at all"
+               (NONE, String.fromString "\tab");
+             A.eqStringOption "a leading newline cannot be scanned at all"
+               (NONE, String.fromString "\nab"))),
+
+          Case ("fromString stops at a non-printable character", fn () =>
+            A.eqStringOption "up to the control character"
+              (SOME "ab", String.fromString ("ab" ^ String.str (Char.chr 4) ^ "cd"))),
+
+          Case ("fromCString rejects an unescaped double quote", fn () =>
+            (A.eqStringOption "a bare single quote is accepted"
+               (SOME "a'b", String.fromCString "a'b");
+             A.eqStringOption "a bare double quote stops the scan"
+               (SOME "a", String.fromCString "a\"b")))
         ]
         (* String.scan reads the body of an SML string literal, decoding
          * escapes as it goes, and consumes as much as it can.
@@ -344,7 +453,73 @@ functor StringTestsFn (C : TEST_CONFIG) =
                     fn s => String.fromString (String.toString s) = SOME s),
 
           P.forAll ("fromCString inverts toCString", str, showS,
-                    fn s => String.fromCString (String.toCString s) = SOME s)
+                    fn s => String.fromCString (String.toCString s) = SOME s),
+
+          (* "This is equivalent to translate Char.toString s", and likewise
+           * for toCString. *)
+          P.forAll ("toString is translate of Char.toString", G.string, showS,
+                    fn s => String.toString s = String.translate Char.toString s),
+
+          P.forAll ("toCString is translate of Char.toCString", G.string, showS,
+                    fn s => String.toCString s = String.translate Char.toCString s),
+
+          (* "It is equivalent to implode(List.map f (explode s))." *)
+          P.forAll ("map is implode of the mapped explosion", str, showS,
+                    fn s =>
+                      String.map Char.toUpper s
+                      = String.implode (List.map Char.toUpper (String.explode s))),
+
+          (* "This is equivalent to concat (List.map str l)." *)
+          P.forAll ("implode is concat of the singletons",
+                    G.list G.asciiChar, Show.charList,
+                    fn cs =>
+                      String.implode cs
+                      = String.concat (List.map String.str cs)),
+
+          P.forAll ("every string contains itself and the empty string",
+                    str, showS,
+                    fn s =>
+                      String.isPrefix s s andalso String.isSuffix s s
+                      andalso String.isSubstring s s
+                      andalso String.isPrefix "" s
+                      andalso String.isSuffix "" s
+                      andalso String.isSubstring "" s),
+
+          P.forAll ("a suffix is also a substring", pairS, showPairS,
+                    fn (a, b) =>
+                      P.implies (String.isSuffix a b, String.isSubstring a b)),
+
+          P.forAll ("isSubstring agrees with a search over the windows",
+                    G.pair (G.resize 4 str, str), showPairS,
+                    fn (a, b) =>
+                      let
+                        val n = String.size a
+                        fun at i = String.substring (b, i, n) = a
+                        fun search i =
+                          if i + n > String.size b then false
+                          else at i orelse search (i + 1)
+                      in
+                        String.isSubstring a b = search 0
+                      end),
+
+          (* "A token is a non-empty maximal substring of s not containing any
+           * delimiter.  A field is a (possibly empty) maximal substring of s
+           * not containing any delimiter." *)
+          P.forAll ("no field contains a delimiter", str, showS,
+                    fn s =>
+                      List.all (fn f => not (Char.contains f isComma))
+                               (String.fields comma s)),
+
+          P.forAll ("every token is non-empty", str, showS,
+                    fn s => List.all (fn t => t <> "") (String.tokens comma s)),
+
+          P.forAll ("fields is tokens once the empty pieces are put back",
+                    str, showS,
+                    fn s =>
+                      String.concatWith "," (String.fields comma s) = s
+                      andalso List.all (fn t => List.exists (fn f => f = t)
+                                                            (String.fields comma s))
+                                       (String.tokens comma s))
         ])
       ])
   end
