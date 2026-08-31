@@ -29,6 +29,13 @@ run/mlton.sh --core --only Word
 internal compiler error that has nothing to do with this suite. See the last
 section.
 
+`run/mlton.sh` passes `-drop-pass bounceVars`. That is not a tuning
+preference: MLton compiles the suite as one program, and `bounceVars` — an
+RSSA pass whose cost grows with the size of a single function — needs more
+than 7GB on the function that builds the test tree, so the compiler is killed
+on an ordinary machine and on a GitHub runner alike. Dropping that one pass
+costs a little generated code quality and nothing else.
+
 Each script accepts the suite's own options:
 
 ```
@@ -129,6 +136,9 @@ structure that matches it and pointing `src/config/selected.sml` at it.
 | `canSpawnProcesses` | `OS.Process.system` can run a child process |
 | `hasPollingIO` | `OS.IO.poll` works on descriptors from ordinary files |
 | `canPollBothDirections` | One poll descriptor may carry `pollIn` and `pollOut` together |
+| `canExtractAtHugeIndex` | `String.extract` may be called with an index near `maxInt` |
+| `negativeSleepReturns` | `OS.Process.sleep` returns at once on a negative time |
+| `dateFmtHandlesZone` | `Date.fmt` is safe to call with `%Z` |
 | `timeResolutionNanos` | Granularity of `Time.time`, in nanoseconds |
 
 Three configurations ship: `ConfigUnix` (the default), `ConfigWindows`, and
@@ -142,6 +152,16 @@ declares everything unsupported and still look green.
 The dividing line is deliberate: a configuration declares *intended* behaviour,
 so the suite compares the implementation against a specification rather than
 against itself. Auto-detecting these facts would make every test vacuous.
+
+Four of those flags are a different kind of thing, and all four default to
+off: `canPollBothDirections`, `canExtractAtHugeIndex`, `negativeSleepReturns`
+and `dateFmtHandlesZone` each guard a call that the Basis specifies plainly
+but that one of the three implementations does not merely get wrong — it
+crashes the runtime or blocks forever, and a run that dies reports nothing
+about the thousand tests it never reached. Each is written up under the
+implementation it belongs to below. Turning one on asks the suite to make the
+call; leaving it off reports a skip with the reason, which is the same
+treatment every other inapplicable test gets.
 
 ## Property-based testing
 
@@ -181,12 +201,12 @@ Every structure the Basis Library marks as **required**:
 `TextPrimIO` · `Time` · `Timer` · `Vector` · `VectorSlice` · `Word` · `Word8` ·
 `Word8Array` · `Word8ArraySlice` · `Word8Vector` · `Word8VectorSlice`
 
-1299 tests at run time, from 1115 in the source: 681 unit tests and 434
+1778 tests at run time, from 1512 in the source: 884 unit tests and 628
 properties, some of which are generic over a signature and instantiated once
-per required instance — 536 properties actually run. At the default 100 trials
-that is about 54,000 generated cases. The optional structures below add 111
-more tests in the source and, on MLton's profile, 583 at run time and another
-29,000 generated cases.
+per required instance — 794 properties actually run. At the default 100 trials
+that is about 79,000 generated cases. The optional structures below add 116
+more tests in the source and, on MLton's profile, 741 at run time and another
+41,000 generated cases.
 
 Eight of those structures are monomorphic sequences, three are `WORD`
 instances, three are `INTEGER` and two are `REAL`. Testing each by hand would
@@ -195,6 +215,54 @@ once against the signature (`gen-mono-seq.sml`, `gen-mono-slice.sml`,
 `gen-numeric.sml`) and applied to every instance in `test-instances.sml`. The
 hand-written `Word`, `Int` and `Real` suites remain and go deeper on the
 default types; the generic ones give breadth across all the instances.
+
+### What a test encodes
+
+A member being *mentioned* somewhere is not the same as its behaviour being
+checked, so the tests are written against the specification clause by clause:
+what a function returns, which exception it raises and on which argument, and
+what order it promises to do things in. Four kinds of text in the Basis are
+turned into tests mechanically.
+
+**The tables are transcribed.** `Char.toString` and `Char.toCString` are
+specified by a table of escape sequences; both tables are written out as a
+reference function and checked against every character, not against a sample.
+The same goes for the `Math` tables of exceptional cases — every row of
+`atan2`'s eleven and `pow`'s eighteen, and the properties given for `sinh`,
+`cosh` and `tanh` at zero and at the infinities.
+
+**The worked examples are tests.** Where the specification illustrates a
+function with a table of inputs and results — `OS.Path.fromString`,
+`getParent`, `splitDirFile`, `splitBaseExt` and `mkRelative`,
+`Char.fromString` and `String.fromString`, `Substring.splitl`/`splitr`,
+`String.tokens`/`fields`, `Date`'s `minute = 10, second = ~140`, `Time`'s
+`fmt 0 (fromReal 1.8) = "2"` — that table is the test.
+
+**"Equivalent to" is a property.** The Basis defines many operations by
+giving an equivalent expression: `mapPartial f` is `((map valOf) o (filter
+isSome) o (map f))`, `app f sl` is `appi (f o #2) sl`, `toString` is `fmt
+(GEN NONE)`, `skipWS` is `dropl Char.isSpace`, `Array.vector` is
+`Vector.tabulate (length arr, fn i => sub (arr, i))`, `fromInt` is
+`fromLargeWord o LargeWord.fromLargeInt o Int.toLarge`. Each such equivalence
+is a property over generated inputs rather than a comment.
+
+**The Discussion is part of the specification.** `STREAM_IO`'s discussion
+states its invariants as SML predicates — `chkInput`, `chkClose`, `noBlock`,
+`isEOS`, `allAndN`, `input1` in terms of `inputN` — and they are tested as
+written. So are `SUBSTRING`'s requirement that `splitl`, `tokens` and the rest
+return pieces sharing the base string, `LIST_PAIR`'s requirement that the
+length check be made lazily, `CHAR`'s locale-independent definition of every
+predicate as a range test, `INT_INF`'s rule that a high enough bit reports the
+sign, and `WORD`'s requirement that `LargeWord.wordSize <= LargeInt.precision`.
+
+Where the specification contradicts itself the test accepts both readings and
+says which passage it is reconciling: `Math.cosh` at a negative infinity is
+`+inf` by the definition given in the same paragraph and `~inf` by the table
+below it; a closed `PrimIO` reader raises `ClosedStream` by the `PRIM_IO`
+description and `Io` carrying `ClosedStream` by the `IO` discussion; `Time`'s
+scanning grammar makes the point optional in one reading and mandatory in
+another. Accepting both is not a weakening — it is the only honest reading of
+a document that says both things.
 
 ### Checking that nothing was missed
 
@@ -232,6 +300,18 @@ skipped.
 This is a coverage *floor*, not a proof. It shows that no required member was
 overlooked; it does not claim that every test of every member is a thorough
 one.
+
+A handful of specified behaviours cannot be reached from inside a running
+test, and are left out deliberately rather than approximated: the `Size`
+raised when a string, vector or array would exceed `maxSize` or `maxLen`
+(provoking it means asking for an allocation of that size); `Real.fromInt` of
+a value whose magnitude exceeds `maxFinite` (no integer type on these
+implementations is that wide); the order in which `OS.Process.atExit` actions
+run, and `exit` and `terminate` themselves, all of which are observable only
+after the run has ended; `OS.FileSys.fileId p = fileId (readLink p)`, which
+needs a symbolic link the Basis gives no way to create; and the actual
+buffering behaviour behind `IO.NO_BUF`, `LINE_BUF` and `BLOCK_BUF`, of which
+only the flushing that `flushOut` and `setBufferMode` promise is observable.
 
 ### Optional structures
 
@@ -312,91 +392,158 @@ behaviour the test accepts both, or is gated by configuration.
 
 | | tests | passed | failed | errored | skipped |
 | --- | --- | --- | --- | --- | --- |
-| SML/NJ 2026.1 (63-bit int and word) | 1756 | 1724 | 27 | 0 | 5 |
-| MLton 20241230 (32-bit int and word) | 1882 | 1875 | 2 | 0 | 5 |
-| Poly/ML 5.7.1 (63-bit int and word) | 1731 | 1714 | 8 | 4 | 5 |
+| SML/NJ 2026.1 (63-bit int and word) | 2359 | 2295 | 56 | 0 | 8 |
+| MLton 20241230 (32-bit int and word) | 2519 | 2503 | 8 | 0 | 8 |
+| Poly/ML 5.7.1 (63-bit int and word) | 2353 | 2312 | 29 | 4 | 8 |
 
-The required part is 1299 tests in every column. The columns differ because
+The required part is 1778 tests in every column. The columns differ because
 each implementation's profile names a different set of optional structures:
-583 further tests on MLton, 457 on SML/NJ, 432 on Poly/ML. Running any of the
-three with `--core` gives the same 1299 everywhere, plus one skip standing for
+741 further tests on MLton, 581 on SML/NJ, 575 on Poly/ML. Running any of the
+three with `--core` gives the same 1778 everywhere, plus one skip standing for
 the optional group that build does not have.
 
 "Errored" means an unexpected exception escaped, as opposed to an assertion
 returning false; the two are counted separately so that a library raising
-something surprising is never mistaken for a test simply being false. The five
-skips are the three Windows `OS.Path` tests, the hexadecimal real literal
-test, and the combined-direction poll test described below.
+something surprising is never mistaken for a test simply being false. The
+eight skips are the three Windows `OS.Path` tests, the hexadecimal real
+literal test, and the four tests behind the crash-guard flags: the
+combined-direction poll, `String.extract` at a huge index, the negative sleep,
+and `Date.fmt "%Z"`.
 
-**SML/NJ 2026.1** — 21 failures in the required part, from nine distinct
-defects:
+**MLton 20241230** — 8 failures, all in the required part; every optional
+structure it provides passes:
+
+- `Bool.scan` neither skips leading whitespace nor ignores case, although the
+  specification asks for both: `Bool.fromString "   true"` and
+  `Bool.fromString "TRUE"` are `NONE`. `Int.fromString "   42"` skips
+  whitespace correctly, so this is specific to `Bool`. Three of the eight.
+- `Char.fromCString` and `String.fromCString` accept an unescaped double
+  quote, which the specification singles out as the one character C does not
+  allow bare: `Char.fromCString "\""` should be `NONE` and
+  `String.fromCString "a\"b"` should stop at the quote and return `SOME "a"`.
+- `TextIO.endOfStream` stays `false` after `inputAll` has consumed the whole
+  stream. Draining the same stream with `input1` sets it correctly.
+- `Date.date` with an offset larger than a day reduces it the wrong way. The
+  specification writes the reduction out: an offset of 25 hours becomes an
+  offset of 1 hour with 24 hours added to the date. MLton reports an offset of
+  23 hours.
+- `TextIO.StreamIO.canInput` reports `SOME 0` on a stream that has already
+  been determined by a call to `input` — the `STREAM_IO` discussion states as
+  an invariant that `SOME 0` means end-of-stream, and this stream has a
+  character available.
+
+**SML/NJ 2026.1** — 48 failures in the required part and 8 in the optional
+structures. The distinct defects:
 
 - `String.isSubstring "" ""` is `false`. The empty string is a substring of
   every string; `isSubstring "" "a"` and `isPrefix "" ""` are both `true`.
-- `StringCvt.skipWS` does not skip `\f` or `\v`, although `Char.isSpace`
-  reports both as whitespace.
-- `Vector.update`, `CharVector.update` and `Word8Vector.update` perform no
-  bounds check: index `3` and index `~1` on a three-element vector both return
-  normally instead of raising `Subscript`. The array versions are checked
-  correctly, so this is specific to the immutable update.
+  Four of the failures, counting the laws that follow from it.
+- The scanners skip only space, tab and newline as whitespace. `\r`, `\f` and
+  `\v` are left in place by `StringCvt.skipWS` and by every scanner built on
+  it, although `Char.isSpace` reports all six as whitespace.
+- `Vector.update`, `CharVector.update`, `Word8Vector.update` and
+  `RealVector.update` perform no bounds check: index `3` and index `~1` on a
+  three-element vector both return normally instead of raising `Subscript`.
+  The array versions are checked correctly, so this is specific to the
+  immutable update.
 - `TextIO.inputAll` and `BinIO.inputAll` raise `Io` on an empty stream. This
   reaches the functional `StreamIO` layer too, which is where most of the
-  eighteen failures come from.
+  remaining failures come from.
+- `inputN` with a negative count raises `Subscript` where the specification
+  says `Size`, at all three levels — `TextIO`, `BinIO` and
+  `TextIO.StreamIO`.
+- `TextIO.StreamIO.getReader` can be applied twice. The second call must raise
+  `Io`: the stream is truncated by the first.
+- `exnMessage Div` is `"divide by zero"`. The specification allows any wording
+  but requires the message to contain `exnName ex`, and this one does not
+  contain `"Div"`.
+- `Bool.fromString "TRUE"` is `NONE`; the specification says the scan ignores
+  case.
+- `Char.fromCString "\^H"` is `NONE`: the control escape `\^c` is in the C
+  escape table the specification lists. `fromCString` also accepts an
+  unescaped double quote, as MLton's does.
+- `Char.scan` leaves an escaped formatting sequence in the remainder. The
+  specification requires that the stream returned by `scan` never has one as
+  its prefix, since such sequences are scanned and passed over.
+- `String.fromString "\ \\^D"` is `NONE` rather than `SOME ""`. The
+  specification tabulates this case: a prefix that scans to nothing is still a
+  successful scan.
+- `Real.rem (inf, 3.0)` is `0.0`; an infinite dividend gives NaN.
+- The signed zero is lost in several `Math` functions: `sinh ~0.0` is `+0.0`,
+  `atan2 (~0.0, 1.0)` is `+0.0`, and `pow (~0.0, ~3.0)` is `+inf`, where the
+  tables give `~0.0`, `~0.0` and `~inf`. `atan2 (inf, inf)` is not `pi/4`.
+- `Math.pow` has a relative error of about 1e-10 (roughly 184,000 ulps) for
+  non-trivial exponents, and `sinh` and `cosh` disagree with their own
+  definition in terms of `exp` by more than the configured tolerance. The
+  Basis mandates no accuracy for these, so both are quality observations
+  rather than conformance failures — they are what the laws report at the
+  default 4096-ulp tolerance, and raising `mathToleranceUlps` silences them.
 - `Date.fromString` does not skip leading whitespace, though every other
   scanner in the implementation does.
-- `Date.toTime` followed by `Date.fromTimeUniv` is off by twelve hours for a
-  date carrying an explicit UTC offset, so no date round-trips through a time.
+- `Date.toTime` ignores the offset of a date carrying an explicit one, so no
+  such date round-trips through a time and two dates in different zones
+  compare as the same instant. `Date.date` also reduces an offset larger than
+  a day without moving the borrowed hours into the date.
 - `LargeInt.fmt StringCvt.HEX` emits lower-case digits while `Int.fmt`,
-  `Word.fmt`, `LargeWord.fmt` and `Position.fmt` all emit upper case.
-- `OS.IO.poll` **terminates the runtime with a segmentation fault** when a
-  single poll descriptor carries both `pollIn` and `pollOut`. Each direction
-  alone is fine, and so are several separate descriptors in one call. Because
-  a crash takes the rest of the run with it, the combined case is behind
-  `canPollBothDirections`, which defaults to off; the individual directions
-  are tested unconditionally.
-- `Math.pow` has a relative error of about 1e-10 (roughly 184,000 ulps) for
-  non-trivial exponents, while `exp` and `ln` are exact. The Basis mandates no
-  accuracy for these, so this is a quality observation rather than a
-  conformance failure — it is what the `pow` law reports at the default
-  4096-ulp tolerance, and raising `mathToleranceUlps` silences it.
-
-and 6 more in the optional structures, from four:
-
+  `Word.fmt`, `LargeWord.fmt` and `Position.fmt` all emit upper case. The same
+  structure appears again as `IntInf`, so the defect is reported three times.
+- `LargeWord.toInt`, `Word64.toInt` and `SysWord.toInt` disagree with the
+  composition the `WORD` discussion writes out,
+  `Int.fromLarge o LargeWord.toLargeInt o toLarge`.
 - `IntInf.pow (1, ~5)` is `0`. The specification fixes `pow` at a negative
   exponent by cases: a zero base raises `Div`, a base of absolute value one
   gives `i^j` — so `1` for `1`, and `1` or `~1` by parity for `~1` — and only
   a base larger than one truncates to `0`. SML/NJ takes the last case for all
   of them.
-- `IntInf.fmt StringCvt.HEX` emits lower-case digits. `IntInf` and `LargeInt`
-  are the same structure here, so this is the `LargeInt` defect above showing
-  up a second time.
 - `Array2.array (0, 3, init)` has dimensions `(0, 0)`: a zero in one dimension
-  erases the other, although `array (r, c, init)` is specified to build an
-  `r` by `c` array. MLton reports `(0, 3)`.
-- An `Array2` region with `nrows = SOME 0` is traversed to the edge of the
-  array as though the extent had been `NONE`, so an empty region is not empty.
-  `SOME 0` and `NONE` are different requests. This accounts for two of the
-  six, the unit test and the property.
-- `RealVector.update` performs no bounds check, the same immutable-update
-  defect already listed for `Vector`, `CharVector` and `Word8Vector`.
+  erases the other. An `Array2` region with `nrows = SOME 0` is traversed to
+  the edge of the array as though the extent had been `NONE`, so an empty
+  region is not empty.
+- Two calls crash or hang rather than answering, so both are behind
+  configuration flags and are skipped by default. `String.extract ("abcde",
+  valOf Int.maxInt, SOME 1)` dies with `Fatal error -- bogus overflow fault`,
+  where the specification requires the bounds check to raise `Subscript`
+  without an overflowing addition — the same call on `substring` and on every
+  `Substring` operation is checked correctly. `OS.Process.sleep` with a
+  negative argument never returns, where the specification says the process
+  does not sleep at all. `OS.IO.poll` **terminates the runtime with a
+  segmentation fault** when a single poll descriptor carries both `pollIn` and
+  `pollOut`; each direction alone is fine.
 
-**MLton 20241230** — 2 failures, both in the required part; every optional
-structure it provides passes:
+**Poly/ML 5.7.1** — 20 failures in the required part (four of them errors) and
+13 in the optional structures:
 
-- `Bool.fromString "   true"` is `NONE`; leading whitespace is not skipped,
-  though `Int.fromString "   42"` correctly returns `SOME 42`.
-- `TextIO.endOfStream` stays `false` after `inputAll` has consumed the whole
-  stream. Draining the same stream with `input1` sets it correctly.
-
-**Poly/ML 5.7.1** — 6 failures in the required part:
-
-- `Real.fromString` rejects `"inf"`, `"infinity"` and `"nan"`, which are in the
-  Basis grammar and which its own `Real.toString` produces, so the special
+- `Real.fromString` rejects `"inf"`, `"infinity"` and `"nan"`, which are in
+  the Basis grammar and which its own `Real.toString` produces, so the special
   values do not round-trip.
+- `Real.nextAfter (inf, 1.0)` does not return an infinity; the specification
+  says `nextAfter` of `+-infinity` is `+-infinity`.
+- `IEEEReal.fromString "0.005"` reports `digits = [0,0,5]` and `exp = 0`. The
+  specification strips the leading zeros of the fraction and lowers the
+  exponent instead: `digits = [5]` and `exp = ~2`.
+- `Substring.substring ("abcde", valOf Int.maxInt, 1)` raises `Overflow`. The
+  implementation note for these functions requires the bounds check to be done
+  in a way that cannot overflow; `String.substring` is correct.
+- `Char.scan` leaves an escaped formatting sequence in the remainder, and both
+  `Char.fromCString` and `String.fromCString` accept an unescaped double
+  quote, exactly as SML/NJ does.
+- `Math.pow (1.0, inf)` is `1.0`. The specification's table gives NaN for
+  `+-1` raised to `+-infinity`; C99 gives `1.0`, and Poly/ML follows C.
+  MLton follows the table.
+- `Time.fmt ~1` returns a string instead of raising `Size`, and
+  `Time.toSeconds` rounds towards negative infinity rather than towards zero,
+  so `~1500` milliseconds becomes `~2` seconds instead of `~1`.
 - `OS.Path.mkRelative` accepts a relative `relativeTo` argument instead of
   raising `Path`. `mkAbsolute` rejects it correctly.
 - `Date.fmt ""` raises `Date`. An empty format string should produce an empty
-  string, as it does on the other two.
+  string, as it does on the other two. The same defect makes `Date.fmt "%Z"`
+  raise for a date with an explicit offset — and that call does not merely
+  raise: it corrupts the heap, and the run dies with a segmentation fault
+  several tests later. It is behind `dateFmtHandlesZone` for that reason.
+- `OS.Process.sleep` raises `SysErr` on a negative time, where the
+  specification says it returns immediately without sleeping. That one is only
+  visible with `negativeSleepReturns` turned on, since the same test hangs
+  SML/NJ.
 - `LargeWord.fromInt ~1` yields `7FFFFFFFFFFFFFFF` rather than all ones, even
   though `LargeWord.wordSize` is 64 and `LargeWord.notb 0w0` and
   `LargeWord.- (0w0, 0w1)` both correctly give `FFFFFFFFFFFFFFFF`.
@@ -406,19 +553,20 @@ structure it provides passes:
 - `LargeWord.~>> (0w1, 0w64)` yields `1` rather than `0`; shifting a positive
   value right by the full word width must clear it. `LargeWord.>>` handles the
   same case correctly.
-- Separately, 5.7.1 cannot compile `Vector.sub` or `Array.sub` applied to a
-  constant sequence at a negative constant index. That is worked around by
-  `Assert.hide` rather than by dropping the tests.
-
-and 6 more in the optional structures, from two:
-
-- `Word64` and `SysWord` repeat the two `LargeWord` defects above, `fromInt ~1`
-  and `~>>` past the full width. All three are the same 64-bit structure under
-  three names, so each defect is reported three times.
+- `LargeWord.toInt` of the top bit returns a value instead of raising
+  `Overflow`, and the conversions disagree with the compositions through
+  `LargeWord` and `LargeInt` that the `WORD` discussion writes out. `Word64`
+  and `SysWord` are the same structure under other names, so each of these
+  four defects is reported three times.
+- `PackRealBig.subVec` reads a vector shorter than one element instead of
+  raising `Subscript`.
 - `Array2.nCols` raises `Subscript` for an array with no rows: both
   `array (0, 3, init)` and `fromList []` have zero rows, and asking either for
   its column count raises rather than answering `3` and `0`. `nRows` of an
   array with no columns is fine, so only the one direction is affected.
+- Separately, 5.7.1 cannot compile `Vector.sub` or `Array.sub` applied to a
+  constant sequence at a negative constant index. That is worked around by
+  `Assert.hide` rather than by dropping the tests.
 
 Poly/ML 5.7.1 dates from 2018 and is what Ubuntu ships; a current release may
 behave differently.
