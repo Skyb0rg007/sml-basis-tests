@@ -128,9 +128,16 @@ functor TimerTestsFn (C : TEST_CONFIG) =
               assertNonNegative "non-collector system time" (#sys nongc);
               assertNonNegative "collector user time" (#usr gc);
               assertNonNegative "collector system time" (#sys gc);
-              A.that "the parts do not exceed the total user time"
-                     (Time.<= (Time.+ (#usr nongc, #usr gc), usr)
-                      orelse Time.>= (Time.+ (#usr nongc, #usr gc), usr));
+              (* checkCPUTimer is specified as the sum of the four parts
+               * checkCPUTimes reports.  The two readings are taken a moment
+               * apart, so the later one -- checkCPUTimer, read second -- can
+               * only be the larger; that it is not smaller than the sum of
+               * the earlier parts is the strongest form the relation can take
+               * without stopping the clock. *)
+              A.that "the total is at least the sum of the earlier parts"
+                     (Time.>= (usr, Time.+ (#usr nongc, #usr gc)));
+              A.that "and the same for system time"
+                     (Time.>= (sys, Time.+ (#sys nongc, #sys gc)));
               A.that "collector time does not exceed total user plus system"
                      (Time.<= (#usr gc, Time.+ (usr, sys)))
             end),
@@ -165,6 +172,25 @@ functor TimerTestsFn (C : TEST_CONFIG) =
         ]),
 
         Group ("laws",
+        (* The other direction of the same relation: read the parts first and
+         * the whole second, so the whole cannot be the smaller.  This one
+         * needs checkCPUTimes, so it is skipped where src/compat supplies
+         * that. *)
+        onlyIf (ownGCTimes, gcWhy)
+        [ P.forAll ("the parts never exceed a later total",
+                    G.int (1, 50), Show.int,
+                    fn n =>
+                      let
+                        val c = Timer.startCPUTimer ()
+                        val () = ignore (List.tabulate (n * 20, fn i => i mod 7))
+                        val { nongc, gc } = Timer.checkCPUTimes c
+                        val { usr, sys } = Timer.checkCPUTimer c
+                      in
+                        Time.>= (usr, Time.+ (#usr nongc, #usr gc))
+                        andalso Time.>= (sys, Time.+ (#sys nongc, #sys gc))
+                      end)
+        ]
+        @
         [ P.forAll ("every real timer reading is non-negative",
                     G.int (1, 200), Show.int,
                     fn n =>

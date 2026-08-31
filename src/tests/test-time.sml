@@ -85,6 +85,46 @@ functor TimeTestsFn (C : TEST_CONFIG) =
              A.eqString "one decimal" ("1.5", Time.fmt 1 (ms 1500));
              A.eqString "three decimals" ("1.500", Time.fmt 3 (ms 1500)))),
 
+          (* The three examples the specification gives, which pin down that
+           * fmt rounds the fractional part rather than truncating it. *)
+          Case ("the examples from the specification", fn () =>
+            (A.eqString "fmt 3 of 1.8" ("1.800", Time.fmt 3 (Time.fromReal 1.8));
+             A.eqString "fmt 0 of 1.8 rounds up"
+               ("2", Time.fmt 0 (Time.fromReal 1.8));
+             A.eqString "fmt 0 of zero" ("0", Time.fmt 0 Time.zeroTime))),
+
+          (* "Having n < 0 causes the Size exception to be raised." *)
+          Case ("fmt rejects a negative number of digits", fn () =>
+            A.raises "negative" A.isSize (fn () => Time.fmt (A.hide ~1) (secs 1))),
+
+          (* "These functions return the number of full seconds ... fractions
+           * of the time unit are dropped, i.e., the values are rounded
+           * towards 0." *)
+          Case ("conversion rounds towards zero, not downwards", fn () =>
+            (A.eqLargeInt "~1500 ms is minus one second"
+               (LargeInt.fromInt ~1, Time.toSeconds (ms ~1500));
+             A.eqLargeInt "~1999 ms is still minus one second"
+               (LargeInt.fromInt ~1, Time.toSeconds (ms ~1999));
+             A.eqLargeInt "~999 ms is zero seconds"
+               (LargeInt.fromInt 0, Time.toSeconds (ms ~999));
+             A.eqLargeInt "999 ms is zero seconds"
+               (LargeInt.fromInt 0, Time.toSeconds (ms 999)))),
+
+          (* "Thus, if t denotes 2.01 seconds, the functions return 2, 2010,
+           * 2010000, and 2010000000 respectively." *)
+          Case ("the worked example of the four units", fn () =>
+            let
+              val t = ms 2010
+            in
+              A.eqLargeInt "seconds" (LargeInt.fromInt 2, Time.toSeconds t);
+              A.eqLargeInt "milliseconds"
+                (LargeInt.fromInt 2010, Time.toMilliseconds t);
+              A.eqLargeInt "microseconds"
+                (LargeInt.fromInt 2010000, Time.toMicroseconds t);
+              A.eqLargeInt "nanoseconds"
+                (LargeInt.fromInt 2010000000, Time.toNanoseconds t)
+            end),
+
           Case ("fromString", fn () =>
             (A.eqBy (op =, Show.option showT) "whole seconds"
                (SOME (secs 1), Time.fromString "1.000");
@@ -126,6 +166,41 @@ functor TimeTestsFn (C : TEST_CONFIG) =
           Case ("scan rejects what is not a time", fn () =>
             A.that "letters"
               (not (isSome (Time.scan Substring.getc (Substring.full "abc"))))),
+
+          (* "[+~-]?([0-9]+.[0-9]+? | .[0-9]+)" *)
+          Case ("scan accepts every shape in the grammar", fn () =>
+            let
+              val eq = A.eqBy (op =, Show.option showT)
+            in
+              eq "a plus sign" (SOME (ms 1500), Time.fromString "+1.5");
+              eq "a hyphen sign" (SOME (ms ~1500), Time.fromString "-1.5");
+              eq "a tilde sign" (SOME (ms ~1500), Time.fromString "~1.5");
+              (* The specification's regular expression makes the digits
+               * after the point optional but not the point itself, while the
+               * bare-integer form every implementation accepts is not in the
+               * grammar at all.  Both readings are therefore allowed here;
+               * what is checked is that the scanner does not invent a
+               * different value. *)
+              A.that "a trailing point"
+                (case Time.fromString "1." of
+                     NONE => true
+                   | SOME t => t = secs 1);
+              eq "no integral digits" (SOME (ms 500), Time.fromString ".5");
+              eq "no point at all" (SOME (secs 42), Time.fromString "42")
+            end),
+
+          (* "Note that this function is equivalent to StringCvt.scanString
+           * scan." *)
+          Case ("fromString is scanString scan", fn () =>
+            let
+              val eq = A.eqBy (op =, Show.option showT)
+            in
+              List.app
+                (fn s =>
+                   eq ("agree on " ^ s)
+                     (StringCvt.scanString Time.scan s, Time.fromString s))
+                ["1.5", "  2.25", "abc", "", "~3.5", ".5"]
+            end),
 
           Case ("the Time exception exists", fn () =>
             A.eqString "name" ("Time", exnName Time.Time))
@@ -199,7 +274,52 @@ functor TimeTestsFn (C : TEST_CONFIG) =
                             = LargeInt.fromInt (n * 1000)),
 
           P.forAll ("fromString inverts toString", G.int (0, 100000), Show.int,
-                    fn n => Time.fromString (Time.toString (secs n)) = SOME (secs n))
+                    fn n => Time.fromString (Time.toString (secs n)) = SOME (secs n)),
+
+          (* "toString rounds t to 3 decimal digits.  It is equivalent to
+           * fmt 3 t." *)
+          P.forAll ("toString is fmt 3", smallSecs, Show.int,
+                    fn n => Time.toString (ms n) = Time.fmt 3 (ms n)),
+
+          P.forAll ("fmt rounds to the requested number of digits",
+                    G.pair (G.int (~5000, 5000), G.int (0, 6)),
+                    Show.pair (Show.int, Show.int),
+                    fn (n, k) =>
+                      let
+                        val t = ms n
+                        val s = Time.fmt k t
+                        val body = if String.isPrefix "~" s
+                                   then String.extract (s, 1, NONE) else s
+                        val (whole, frac) =
+                          Substring.splitl (fn c => c <> #".")
+                                           (Substring.full body)
+                      in
+                        Substring.size whole >= 1
+                        andalso List.all Char.isDigit (Substring.explode whole)
+                        andalso (if k = 0 then Substring.size frac = 0
+                                 else Substring.size frac = k + 1)
+                      end),
+
+          (* "converts the real number r to the time value denoting r
+           * seconds", and back. *)
+          P.forAll ("fromReal and toReal agree on whole seconds",
+                    G.int (~100000, 100000), Show.int,
+                    fn n =>
+                      Real.== (Real.fromInt n,
+                               Time.toReal (Time.fromReal (Real.fromInt n)))),
+
+          P.forAll ("the four units scale as they should",
+                    G.int (~1000, 1000), Show.int,
+                    fn n =>
+                      Time.toMicroseconds (secs n)
+                      = LargeInt.fromInt n * LargeInt.fromInt 1000000
+                      andalso Time.toNanoseconds (ms n)
+                              = LargeInt.fromInt n * LargeInt.fromInt 1000000),
+
+          P.forAll ("subtraction is addition of the negation",
+                    G.pair (smallSecs, smallSecs), Show.pair (Show.int, Show.int),
+                    fn (a, b) =>
+                      Time.- (secs a, secs b) = Time.+ (secs a, secs (~b)))
         ])
       ])
   end

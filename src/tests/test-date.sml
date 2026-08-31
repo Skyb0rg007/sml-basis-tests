@@ -109,6 +109,53 @@ functor DateTestsFn (C : TEST_CONFIG) =
               A.eqInt "and becomes the first" (1, Date.day d)
             end),
 
+          (* "Thus, minute = 10, second = ~140 becomes minute = 7,
+           * second = 40." *)
+          Case ("the normalisation example from the specification", fn () =>
+            let
+              val d = Date.date { year = 2000, month = Date.Jan, day = 1,
+                                  hour = 0, minute = 10, second = ~140,
+                                  offset = utc }
+            in
+              A.eqInt "minute" (7, Date.minute d);
+              A.eqInt "second" (40, Date.second d)
+            end),
+
+          Case ("every field borrows from the next larger unit", fn () =>
+            let
+              fun at (hh, mm, ss) =
+                Date.date { year = 2000, month = Date.Mar, day = 10,
+                            hour = hh, minute = mm, second = ss, offset = utc }
+              val a = at (0, 0, 3600)      (* an hour of seconds *)
+              val b = at (0, ~1, 0)        (* a minute before midnight *)
+              val c = at (25, 0, 0)        (* past the end of the day *)
+            in
+              A.eqInt "3600 seconds is an hour" (1, Date.hour a);
+              A.eqInt "and no minutes" (0, Date.minute a);
+              A.eqInt "a negative minute borrows a day" (9, Date.day b);
+              A.eqInt "leaving the last hour" (23, Date.hour b);
+              A.eqInt "and the last minute" (59, Date.minute b);
+              A.eqInt "25 hours rolls into the next day" (11, Date.day c);
+              A.eqInt "leaving one hour" (1, Date.hour c)
+            end),
+
+          (* "Offsets are taken modulo 24 hours.  That is, we express t, in
+           * hours, as sgn(t)(24*d + r) ... The offset then becomes sgn(t)*r
+           * and sgn(t)(24*d) is added to the hours." *)
+          Case ("an offset beyond a day is reduced, and the rest moves to the hours",
+            fn () =>
+              let
+                val hours = Time.fromSeconds o LargeInt.fromInt
+                val d = Date.date { year = 2000, month = Date.Jan, day = 10,
+                                    hour = 12, minute = 0, second = 0,
+                                    offset = SOME (hours (25 * 3600)) }
+              in
+                A.eqBy (op =, Show.option Show.time) "the offset is reduced"
+                  (SOME (hours 3600), Date.offset d);
+                A.eqInt "and the day advances" (11, Date.day d);
+                A.eqInt "with the hours unchanged" (12, Date.hour d)
+              end),
+
           Case ("the leap year rule", fn () =>
             (A.eqInt "2000 is a leap year, so 29 February exists"
                (29, Date.day (mk (2000, Date.Feb, 29, 0, 0, 0)));
@@ -169,6 +216,106 @@ functor DateTestsFn (C : TEST_CONFIG) =
                      A.eqInt "second" (45, Date.second d'))
             end),
 
+          (* The specifiers whose meaning the specification fixes, as opposed
+           * to the locale-dependent ones. *)
+          Case ("fmt understands the numeric specifiers", fn () =>
+            let
+              val morning = mk (2001, Date.Feb, 3, 9, 5, 7)
+              val afternoon = mk (2001, Date.Feb, 3, 15, 5, 7)
+              val midnight = mk (2001, Date.Feb, 3, 0, 5, 7)
+            in
+              A.eqString "%y is the year of the century"
+                ("01", Date.fmt "%y" morning);
+              A.eqString "%I is the twelve-hour clock"
+                ("09", Date.fmt "%I" morning);
+              A.eqString "%I in the afternoon" ("03", Date.fmt "%I" afternoon);
+              A.eqString "%I at midnight is twelve"
+                ("12", Date.fmt "%I" midnight);
+              A.eqString "%w numbers the days from Sunday"
+                ("6", Date.fmt "%w" morning);
+              A.that "%U is a two-digit week number"
+                (String.size (Date.fmt "%U" morning) = 2
+                 andalso List.all Char.isDigit
+                                  (String.explode (Date.fmt "%U" morning)));
+              A.that "%W is a two-digit week number"
+                (String.size (Date.fmt "%W" morning) = 2
+                 andalso List.all Char.isDigit
+                                  (String.explode (Date.fmt "%W" morning)))
+            end),
+
+          (* "Note, however, that unlike strftime, the behavior of fmt is
+           * defined for the directive %c for any character c": an unknown
+           * directive stands for the character itself. *)
+          Case ("an unknown directive is the character itself", fn () =>
+            let
+              val d = mk (2000, Date.Jan, 1, 0, 0, 0)
+            in
+              A.eqString "%q" ("q", Date.fmt "%q" d);
+              A.eqString "%~" ("~", Date.fmt "%~" d);
+              A.eqString "%5" ("5", Date.fmt "%5" d);
+              A.eqString "surrounded by text" ("aqb", Date.fmt "a%qb" d)
+            end),
+
+          Case ("%A and %B name the weekday and the month", fn () =>
+            let
+              val d = mk (2000, Date.Jan, 1, 13, 0, 0)
+            in
+              A.that "%A produces a string" (String.size (Date.fmt "%A" d) > 0);
+              A.that "%B produces a string" (String.size (Date.fmt "%B" d) > 0)
+            end),
+
+          Case ("%c, %x and %X are the locale's representations", fn () =>
+            let
+              val d = mk (2000, Date.Jan, 1, 13, 0, 0)
+            in
+              A.that "%c produces a string" (String.size (Date.fmt "%c" d) > 0);
+              A.that "%x produces a string" (String.size (Date.fmt "%x" d) > 0);
+              A.that "%X produces a string" (String.size (Date.fmt "%X" d) > 0)
+            end),
+
+          (* "%p: locale's equivalent of the AM/PM designation" -- which may
+           * be empty in a locale that has none, so the requirement is only
+           * that it is accepted. *)
+          Case ("%p is accepted", fn () =>
+            A.noRaise "%p"
+              (fn () => Date.fmt "%p" (mk (2000, Date.Jan, 1, 13, 0, 0)))),
+
+          (* "%Z: time zone name or abbreviation, or the empty string if no
+           * time zone information exists" -- so an empty answer is correct
+           * and the directive must still be accepted.  Behind a configuration
+           * flag because on Poly/ML 5.7.1 this call corrupts the heap; see
+           * dateFmtHandlesZone. *)
+          (* "No check of the consistency of the date (weekday, date in the
+           * month, ...) is performed." *)
+          Case ("scanning does not check the weekday against the date", fn () =>
+            case Date.fromString "Mon Jan 01 12:30:45 2000" of
+                NONE => A.fail "an inconsistent weekday was rejected"
+              | SOME d =>
+                  (A.eqInt "the year is read" (2000, Date.year d);
+                   A.eqInt "the day is read" (1, Date.day d))),
+
+          Case ("scanning insists on the exact format", fn () =>
+            (A.that "a missing weekday"
+               (not (isSome (Date.fromString "Jan 01 12:30:45 2000")));
+             A.that "a one-digit day"
+               (not (isSome (Date.fromString "Sat Jan 1 12:30:45 2000")));
+             A.that "a truncated string"
+               (not (isSome (Date.fromString "Sat Jan 01 12:30:45"))))),
+
+          (* "It is equivalent to StringCvt.scanString scan." *)
+          Case ("fromString is scanString scan", fn () =>
+            let
+              fun agree s =
+                A.that ("agree on " ^ s)
+                  (Option.map Date.toString (Date.fromString s)
+                   = Option.map Date.toString
+                       (StringCvt.scanString Date.scan s))
+            in
+              List.app agree
+                ["Sat Jan 01 12:30:45 2000", "  Sat Jan 01 12:30:45 2000",
+                 "not a date", ""]
+            end),
+
           Case ("fromString skips leading whitespace", fn () =>
             A.that "leading spaces"
               (isSome (Date.fromString "   Sat Jan 01 12:30:45 2000"))),
@@ -185,6 +332,19 @@ functor DateTestsFn (C : TEST_CONFIG) =
                   (A.eqInt "year" (2000, Date.year d);
                    A.eqString "remainder" (" tail", Substring.string rest)))
         ]),
+
+        Group ("the time-zone directive",
+          (* "%Z: time zone name or abbreviation, or the empty string if no
+           * time zone information exists" -- so an empty answer is correct
+           * and the directive must still be accepted.  Behind a flag because
+           * on Poly/ML 5.7.1 this call corrupts the heap and the run dies
+           * with a segmentation fault; see dateFmtHandlesZone. *)
+          onlyIf (C.dateFmtHandlesZone,
+                  "implementation not declared to handle the %Z directive")
+          [ Case ("%Z is accepted", fn () =>
+              A.noRaise "%Z"
+                (fn () => Date.fmt "%Z" (mk (2000, Date.Jan, 1, 13, 0, 0))))
+          ]),
 
         Group ("time and ordering",
         [ Case ("a UTC date survives conversion to a time and back", fn () =>
@@ -240,6 +400,63 @@ functor DateTestsFn (C : TEST_CONFIG) =
               A.eqOrder "earlier" (LESS, Date.compare (a, b));
               A.eqOrder "later" (GREATER, Date.compare (b, a))
             end),
+
+          (* "It lexicographically compares the dates, using the year, month,
+           * day, hour, minute, and second information, but ignoring the
+           * offset and daylight savings time information." *)
+          Case ("compare ignores the time zone", fn () =>
+            let
+              val hours = Time.fromSeconds o LargeInt.fromInt
+              fun at off =
+                Date.date { year = 2000, month = Date.Jan, day = 1,
+                            hour = 12, minute = 0, second = 0, offset = off }
+              val utcDate = at (SOME Time.zeroTime)
+              val westDate = at (SOME (hours (5 * 3600)))
+            in
+              A.eqOrder "the same fields in different zones"
+                (EQUAL, Date.compare (utcDate, westDate));
+              A.that "even though the instants differ"
+                (Time.compare (Date.toTime utcDate, Date.toTime westDate)
+                 <> EQUAL)
+            end),
+
+          (* "fromTimeLocal ... The returned date will have offset=NONE.
+           * fromTimeUniv ... The returned date will have offset=SOME(0)." *)
+          Case ("the two conversions from a time report their zones", fn () =>
+            let
+              val t = Time.fromSeconds (LargeInt.fromInt 946730445)
+            in
+              A.eqBy (op =, Show.option Show.time) "fromTimeLocal has no offset"
+                (NONE, Date.offset (Date.fromTimeLocal t));
+              A.eqBy (op =, Show.option Show.time) "fromTimeUniv is UTC"
+                (SOME Time.zeroTime, Date.offset (Date.fromTimeUniv t))
+            end),
+
+          (* "If these functions are applied to the same time value, the
+           * resulting dates will differ by the offset of the local time zone
+           * from UTC."  Daylight saving may shift the effective offset by an
+           * hour from the one localOffset reports, so both are accepted. *)
+          Case ("the local and universal dates differ by the local offset",
+            fn () =>
+              let
+                val t = Time.fromSeconds (LargeInt.fromInt 946730445)
+                fun asUtcInstant d =
+                  Date.toTime (Date.date { year = Date.year d,
+                                           month = Date.month d,
+                                           day = Date.day d, hour = Date.hour d,
+                                           minute = Date.minute d,
+                                           second = Date.second d,
+                                           offset = SOME Time.zeroTime })
+                val diff = Time.- (asUtcInstant (Date.fromTimeUniv t),
+                                   asUtcInstant (Date.fromTimeLocal t))
+                val off = Date.localOffset ()
+                val hour = Time.fromSeconds (LargeInt.fromInt 3600)
+              in
+                A.that "the difference is the local offset, up to daylight saving"
+                  (diff = off
+                   orelse diff = Time.- (off, hour)
+                   orelse diff = Time.+ (off, hour))
+              end),
 
           Case ("the Date exception exists", fn () =>
             A.eqString "name" ("Date", exnName Date.Date))
@@ -310,6 +527,72 @@ functor DateTestsFn (C : TEST_CONFIG) =
                                      Time.fromSeconds (LargeInt.fromInt 86400)))
                       in
                         index (Date.weekDay next) = (index (Date.weekDay d) + 1) mod 7
+                      end),
+
+          P.forAll ("the twelve-hour clock agrees with the twenty-four hour one",
+                    genDate, showDate,
+                    fn d =>
+                      let
+                        val h = Date.hour d
+                        val twelve = if h mod 12 = 0 then 12 else h mod 12
+                      in
+                        Date.fmt "%I" d
+                        = StringCvt.padLeft #"0" 2 (Int.toString twelve)
+                        andalso Date.fmt "%y" d
+                                = StringCvt.padLeft #"0" 2
+                                    (Int.toString (Date.year d mod 100))
+                      end),
+
+          P.forAll ("%w numbers the weekdays from Sunday", genDate, showDate,
+                    fn d =>
+                      let
+                        val order = [Date.Sun, Date.Mon, Date.Tue, Date.Wed,
+                                     Date.Thu, Date.Fri, Date.Sat]
+                        fun index (w, i, x :: rest) =
+                              if x = w then i else index (w, i + 1, rest)
+                          | index (_, _, []) = ~1
+                      in
+                        Date.fmt "%w" d
+                        = Int.toString (index (Date.weekDay d, 0, order))
+                      end),
+
+          P.forAll ("%j is the day of the year, counting from one",
+                    genDate, showDate,
+                    fn d =>
+                      Date.fmt "%j" d
+                      = StringCvt.padLeft #"0" 3
+                          (Int.toString (Date.yearDay d + 1))),
+
+          P.forAll ("an unknown directive stands for its own character",
+                    G.map Char.chr (G.int (33, 126)), Show.char,
+                    fn c =>
+                      let
+                        val known = "aAbBcdHIjmMpSUwWxXyYZ%"
+                        val d = mk (2000, Date.Jan, 1, 0, 0, 0)
+                      in
+                        P.implies (not (Char.contains known c),
+                                   Date.fmt ("%" ^ String.str c) d
+                                   = String.str c)
+                      end),
+
+          P.forAll ("compare is the lexicographic order on the fields",
+                    G.pair (genDate, genDate), Show.pair (showDate, showDate),
+                    fn (a, b) =>
+                      let
+                        fun monthIndex (m, i, x :: rest) =
+                              if x = m then i else monthIndex (m, i + 1, rest)
+                          | monthIndex (_, _, []) = ~1
+                        fun key d =
+                          [Date.year d, monthIndex (Date.month d, 0, months),
+                           Date.day d, Date.hour d, Date.minute d, Date.second d]
+                        fun collate ([], []) = EQUAL
+                          | collate (x :: xs, y :: ys) =
+                              (case Int.compare (x, y) of
+                                   EQUAL => collate (xs, ys)
+                                 | other => other)
+                          | collate _ = EQUAL
+                      in
+                        Date.compare (a, b) = collate (key a, key b)
                       end),
 
           P.forAll ("fmt of the individual fields agrees with the accessors",

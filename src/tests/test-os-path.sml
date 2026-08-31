@@ -126,7 +126,143 @@ functor OSPathTestsFn (C : TEST_CONFIG) =
               (A.eqString "with an extension"
                  ("a.b", Path.joinBaseExt { base = "a", ext = SOME "b" });
                A.eqString "without one"
-                 ("a", Path.joinBaseExt { base = "a", ext = NONE })))
+                 ("a", Path.joinBaseExt { base = "a", ext = NONE }))),
+
+            (* "Note that although splitBaseExt will never return the
+             * extension SOME(""), joinBaseExt treats this as equivalent to
+             * NONE." *)
+            Case ("joinBaseExt treats an empty extension as none", fn () =>
+              A.eqString "an empty extension"
+                (Path.joinBaseExt { base = "a", ext = NONE },
+                 Path.joinBaseExt { base = "a", ext = SOME "" })),
+
+            (* The example table for fromString. *)
+            Case ("the fromString examples from the specification", fn () =>
+              let
+                val show = fn { isAbs, vol, arcs } =>
+                  "{isAbs=" ^ Show.bool isAbs ^ ", vol=" ^ Show.string vol
+                  ^ ", arcs=" ^ Show.stringList arcs ^ "}"
+                val eq = A.eqBy (op =, show)
+                fun check (p, expected) =
+                  eq (Show.string p) (expected, Path.fromString p)
+              in
+                List.app check
+                  [("", { isAbs = false, vol = "", arcs = [] }),
+                   ("/", { isAbs = true, vol = "", arcs = [""] }),
+                   ("//", { isAbs = true, vol = "", arcs = ["", ""] }),
+                   ("a", { isAbs = false, vol = "", arcs = ["a"] }),
+                   ("/a", { isAbs = true, vol = "", arcs = ["a"] }),
+                   ("//a", { isAbs = true, vol = "", arcs = ["", "a"] }),
+                   ("a/", { isAbs = false, vol = "", arcs = ["a", ""] }),
+                   ("a//", { isAbs = false, vol = "", arcs = ["a", "", ""] }),
+                   ("a/b", { isAbs = false, vol = "", arcs = ["a", "b"] })]
+              end),
+
+            (* The example table for getParent. *)
+            Case ("the getParent examples from the specification", fn () =>
+              List.app
+                (fn (p, expected) =>
+                   A.eqString ("getParent " ^ Show.string p)
+                     (expected, Path.getParent p))
+                [("/", "/"), ("a", "."), ("a/", "a/.."), ("a///", "a///.."),
+                 ("a/b", "a"), ("a/b/", "a/b/.."), ("..", "../.."),
+                 (".", ".."), ("", "..")]),
+
+            (* The example table for splitDirFile. *)
+            Case ("the splitDirFile examples from the specification", fn () =>
+              List.app
+                (fn (p, expected) =>
+                   eqDF ("splitDirFile " ^ Show.string p)
+                     (expected, Path.splitDirFile p))
+                [("", { dir = "", file = "" }),
+                 (".", { dir = "", file = "." }),
+                 ("b", { dir = "", file = "b" }),
+                 ("b/", { dir = "b", file = "" }),
+                 ("a/b", { dir = "a", file = "b" }),
+                 ("/a", { dir = "/", file = "a" })]),
+
+            (* The example table for splitBaseExt. *)
+            Case ("the splitBaseExt examples from the specification", fn () =>
+              List.app
+                (fn (p, expected) =>
+                   eqBE ("splitBaseExt " ^ Show.string p)
+                     (expected, Path.splitBaseExt p))
+                [("", { base = "", ext = NONE }),
+                 (".login", { base = ".login", ext = NONE }),
+                 ("/.login", { base = "/.login", ext = NONE }),
+                 ("a", { base = "a", ext = NONE }),
+                 ("a.", { base = "a.", ext = NONE }),
+                 ("a.b", { base = "a", ext = SOME "b" }),
+                 ("a.b.c", { base = "a.b", ext = SOME "c" }),
+                 (".news/comp", { base = ".news/comp", ext = NONE })]),
+
+            (* The example table for mkRelative. *)
+            Case ("the mkRelative examples from the specification", fn () =>
+              List.app
+                (fn (path, relativeTo, expected) =>
+                   A.eqString ("mkRelative " ^ Show.string path ^ " to "
+                               ^ Show.string relativeTo)
+                     (expected,
+                      Path.mkRelative { path = path, relativeTo = relativeTo }))
+                [("a/b", "/c/d", "a/b"),
+                 ("/", "/a/b/c", "../../.."),
+                 ("/a/b/", "/a/c", "../b/"),
+                 ("/a/b", "/a/c", "../b"),
+                 ("/a/b/", "/a/c/", "../b/"),
+                 ("/a/b", "/a/c/", "../b"),
+                 ("/", "/", "."),
+                 ("/", "/.", "."),
+                 ("/", "/..", "."),
+                 ("/a/b/../c", "/a/d", "../b/../c"),
+                 ("/a/b", "/c/d", "../../a/b"),
+                 ("/c/a/b", "/c/d", "../a/b"),
+                 ("/c/d/a/b", "/c/d", "a/b")]),
+
+            (* "concat does not preserve canonical paths.  For example,
+             * concat("a/b", "../c") returns "a/b/../c"." *)
+            Case ("concat is syntactic, not canonical", fn () =>
+              (A.eqString "a parent arc is kept"
+                 ("a/b/../c", Path.concat ("a/b", "../c"));
+               (* concatArcs "is like List.@, except that a trailing empty arc
+                * in the first argument is dropped". *)
+               A.eqString "a trailing separator is not doubled"
+                 ("a/b", Path.concat ("a/", "b"));
+               A.eqString "onto the current directory"
+                 ("./b", Path.concat (".", "b")))),
+
+            (* "It returns "" when applied to
+             * {isAbs=false, vol="", arcs=[]}." *)
+            Case ("toString of the empty path", fn () =>
+              A.eqString "the empty path"
+                ("", Path.toString { isAbs = false, vol = "", arcs = [] })),
+
+            (* "The exception Path is raised ... if isAbs is false and arcs
+             * has an initial empty arc." *)
+            Case ("toString rejects a relative path with a leading empty arc",
+              fn () =>
+                A.raises "leading empty arc" A.isPath
+                  (fn () => Path.toString { isAbs = false, vol = "",
+                                            arcs = ["", "a"] })),
+
+            (* "Under Unix, the only valid volume name is ""." *)
+            Case ("validVolume on Unix", fn () =>
+              (A.eqBool "the empty volume, absolute"
+                 (true, Path.validVolume { isAbs = true, vol = "" });
+               A.eqBool "the empty volume, relative"
+                 (true, Path.validVolume { isAbs = false, vol = "" });
+               A.eqBool "anything else"
+                 (false, Path.validVolume { isAbs = false, vol = "C:" }))),
+
+            Case ("joinDirFile rejects a file that is not an arc", fn () =>
+              A.raises "an embedded separator" A.isInvalidArc
+                (fn () => Path.joinDirFile { dir = "a", file = "b/c" })),
+
+            Case ("isRoot only accepts the canonical root", fn () =>
+              (A.eqBool "the root" (true, Path.isRoot "/");
+               A.eqBool "a doubled separator is not canonical"
+                 (false, Path.isRoot "//");
+               A.eqBool "nor is a current arc" (false, Path.isRoot "/.");
+               A.eqBool "the empty path" (false, Path.isRoot "")))
           ]),
 
         Group ("Windows syntax",
@@ -323,6 +459,62 @@ functor OSPathTestsFn (C : TEST_CONFIG) =
                       in
                         Path.isAbsolute abs
                         andalso Path.mkRelative { path = abs, relativeTo = root } = p
+                      end),
+
+          (* "It is equivalent to (path = mkCanonical path)." *)
+          P.forAll ("isCanonical is equality with mkCanonical",
+                    G.oneOf [relPath,
+                             G.map (fn a => Path.toString
+                                              { isAbs = true, vol = "",
+                                                arcs = a }) arcs],
+                    showS,
+                    fn p => Path.isCanonical p = (p = Path.mkCanonical p)),
+
+          (* "It holds that getParent path = path if and only if path is a
+           * root." *)
+          P.forAll ("only a root is its own parent",
+                    G.oneOf [relPath,
+                             G.map (fn a => Path.toString
+                                              { isAbs = true, vol = "",
+                                                arcs = a }) arcs],
+                    showS,
+                    fn p => (Path.getParent p = p) = Path.isRoot p),
+
+          (* "In addition, isRelative(toString {isAbs=false, vol, arcs})
+           * evaluates to true when defined." *)
+          P.forAll ("a path built as relative is relative", arcs,
+                    Show.list showS,
+                    fn a =>
+                      Path.isRelative
+                        (Path.toString { isAbs = false, vol = "", arcs = a })),
+
+          (* "They are equivalent to #dir o splitDirFile and
+           * #file o splitDirFile", and the same for base and ext. *)
+          P.forAll ("dir, file, base and ext are the projections",
+                    relPath, showS,
+                    fn p =>
+                      Path.dir p = #dir (Path.splitDirFile p)
+                      andalso Path.file p = #file (Path.splitDirFile p)
+                      andalso Path.base p = #base (Path.splitBaseExt p)
+                      andalso Path.ext p = #ext (Path.splitBaseExt p)),
+
+          (* "if path and relativeTo are canonical, the result will be
+           * canonical", for both mkAbsolute and mkRelative. *)
+          P.forAll ("mkAbsolute of canonical paths is canonical",
+                    G.pair (arcs, arcs), Show.pair (Show.list showS,
+                                                    Show.list showS),
+                    fn (a, b) =>
+                      let
+                        val rel = Path.toString { isAbs = false, vol = "",
+                                                  arcs = a }
+                        val base = Path.toString { isAbs = true, vol = "",
+                                                   arcs = b }
+                      in
+                        P.implies (Path.isCanonical rel
+                                   andalso Path.isCanonical base,
+                                   Path.isCanonical
+                                     (Path.mkAbsolute { path = rel,
+                                                        relativeTo = base }))
                       end),
 
           P.forAll ("making a path absolute makes it absolute",

@@ -155,6 +155,48 @@ functor OSFileSysTestsFn (C : TEST_CONFIG) =
               A.raises "no such directory" (fn OS.SysErr _ => true | _ => false)
                 (fn () => FS.openDir (scratchFile "no-such-directory"))),
 
+            (* "Any subsequent read or rewind on the stream will raise
+             * exception SysErr.  Closing a closed directory stream, however,
+             * has no effect." *)
+            Case ("a closed directory stream is unusable but may be closed again",
+              fn () =>
+                withTempDir "closedir" (fn dir =>
+                  let
+                    val stream = FS.openDir dir
+                    val () = FS.closeDir stream
+                  in
+                    A.raises "reading after closing"
+                      (fn OS.SysErr _ => true | _ => false)
+                      (fn () => FS.readDir stream);
+                    A.raises "rewinding after closing"
+                      (fn OS.SysErr _ => true | _ => false)
+                      (fn () => FS.rewindDir stream);
+                    A.noRaise "closing twice" (fn () => FS.closeDir stream)
+                  end)),
+
+            (* "It raises SysErr if, for example, s does not exist ... or if
+             * the directory is not empty." *)
+            Case ("rmDir refuses what it cannot remove", fn () =>
+              withTempDir "rmdir" (fn dir =>
+                let
+                  val inner = OS.Path.concat (dir, "inner")
+                  val () = FS.mkDir inner
+                  val () = writeFile (OS.Path.concat (inner, "f"), "x")
+                in
+                  A.raises "a directory that is not empty"
+                    (fn OS.SysErr _ => true | _ => false)
+                    (fn () => FS.rmDir inner);
+                  A.raises "a directory that is not there"
+                    (fn OS.SysErr _ => true | _ => false)
+                    (fn () => FS.rmDir (OS.Path.concat (dir, "absent")));
+                  removeQuietly (OS.Path.concat (inner, "f"));
+                  rmDirQuietly inner
+                end)),
+
+            Case ("isDir rejects a path that is not there", fn () =>
+              A.raises "no such file" (fn OS.SysErr _ => true | _ => false)
+                (fn () => FS.isDir (scratchFile "no-such-thing-at-all"))),
+
             (* chDir changes process-wide state, so the original directory is
              * restored even if the assertions fail. *)
             Case ("chDir moves and getDir follows", fn () =>
@@ -283,6 +325,106 @@ functor OSFileSysTestsFn (C : TEST_CONFIG) =
                 A.that "non-empty" (String.size n > 0);
                 A.that "two calls differ" (n <> FS.tmpName ())
               end),
+
+            (* "This creates a new empty file with a unique name and returns
+             * the full pathname of the file." *)
+            Case ("tmpName creates the file it names", fn () =>
+              let
+                val n = FS.tmpName ()
+              in
+                A.eqBool "the file exists" (true, FS.access (n, []));
+                A.eqBool "and is empty"
+                  (true, FS.fileSize n = Position.fromInt 0);
+                A.eqString "the name is absolute"
+                  (n, OS.Path.mkAbsolute { path = n,
+                                           relativeTo = FS.getDir () });
+                removeQuietly n
+              end),
+
+            (* "remove ... It raises SysErr if path does not exist ... or file
+             * is a directory." *)
+            Case ("remove refuses a directory and a missing file", fn () =>
+              withTempDir "remove-dir" (fn dir =>
+                (A.raises "a directory" (fn OS.SysErr _ => true | _ => false)
+                   (fn () => FS.remove dir);
+                 A.raises "a file that is not there"
+                   (fn OS.SysErr _ => true | _ => false)
+                   (fn () => FS.remove (OS.Path.concat (dir, "absent")))))),
+
+            (* "If new and old refer to the same file, rename does nothing.
+             * If a file called new exists, it is removed." *)
+            Case ("rename over an existing file, and onto itself", fn () =>
+              withTempDir "rename-over" (fn dir =>
+                let
+                  val a = OS.Path.concat (dir, "a")
+                  val bb = OS.Path.concat (dir, "b")
+                  val () = writeFile (a, "first")
+                  val () = writeFile (bb, "second")
+                in
+                  FS.rename { old = a, new = bb };
+                  A.eqBool "the old name is gone" (false, FS.access (a, []));
+                  A.eqString "and the new name has the old contents"
+                    ("first", readFile bb);
+                  FS.rename { old = bb, new = bb };
+                  A.eqString "renaming onto itself changes nothing"
+                    ("first", readFile bb)
+                end)),
+
+            (* "If opt is SOME(t), then the time t is used; otherwise the
+             * current time (i.e., Time.now()) is used." *)
+            Case ("setTime with no time uses the current time", fn () =>
+              withTempDir "settime-now" (fn dir =>
+                let
+                  val f = OS.Path.concat (dir, "f")
+                  val () = writeFile (f, "x")
+                  val old = Time.fromSeconds (LargeInt.fromInt 1000000)
+                  val () = FS.setTime (f, SOME old)
+                  val () = A.eqTime "the explicit time was taken"
+                             (old, FS.modTime f)
+                  val before' = Time.now ()
+                  val () = FS.setTime (f, NONE)
+                in
+                  A.that "the modification time moved forward to about now"
+                    (Time.>= (FS.modTime f,
+                              Time.- (before',
+                                      Time.fromSeconds (LargeInt.fromInt 5))))
+                end)),
+
+            (* "An empty path is treated as "."." *)
+            Case ("fullPath of the empty path is the current directory",
+              fn () =>
+                A.eqString "the empty path"
+                  (FS.fullPath OS.Path.currentArc, FS.fullPath "")),
+
+            (* "If path is an absolute path, then realPath acts like fullPath.
+             * If path is relative ... it returns a path that is relative to
+             * the current working directory." *)
+            Case ("realPath keeps a relative path relative", fn () =>
+              withTempDir "realpath" (fn dir =>
+                let
+                  val f = OS.Path.concat (dir, "f")
+                  val () = writeFile (f, "x")
+                  val abs = FS.fullPath f
+                in
+                  A.eqString "an absolute path goes through fullPath"
+                    (FS.fullPath abs, FS.realPath abs);
+                  A.eqBool "a relative path stays relative"
+                    (true, OS.Path.isRelative (FS.realPath f))
+                end)),
+
+            Case ("access with no modes tests existence", fn () =>
+              withTempDir "access-exists" (fn dir =>
+                let
+                  val f = OS.Path.concat (dir, "f")
+                  val () = writeFile (f, "x")
+                in
+                  A.eqBool "a file that is there" (true, FS.access (f, []));
+                  A.eqBool "one that is not"
+                    (false, FS.access (OS.Path.concat (dir, "absent"), []));
+                  A.eqBool "a missing file has no read access either"
+                    (false, FS.access (OS.Path.concat (dir, "absent"),
+                                       [FS.A_READ]))
+                end)),
 
             Case ("fileId identifies a file", fn () =>
               withTempDir "fileid" (fn dir =>
@@ -492,8 +634,72 @@ functor OSFileSysTestsFn (C : TEST_CONFIG) =
                                              SOME Time.zeroTime)
                             in
                               A.that "at most one result per descriptor asked"
-                                (List.length infos <= 2)
+                                (List.length infos <= 2);
+                              (* "The returned list respects the order of the
+                               * argument list", and every result names one of
+                               * the descriptors that was asked about. *)
+                              A.that "every result names the descriptor asked"
+                                (List.all
+                                   (fn info =>
+                                      OS.IO.compare
+                                        (OS.IO.pollToIODesc
+                                           (OS.IO.infoToPollDesc info),
+                                         OS.IO.pollToIODesc pd) = EQUAL)
+                                   infos)
                             end)
+                  end)),
+
+          (* "SOME(t) means timeout after time t" -- a poll with a timeout on
+           * a descriptor that is ready must not wait for it. *)
+          Case ("a timeout is an upper bound, not a wait",
+            fn () =>
+              if not (C.hasFileSystem andalso C.hasPollingIO) then ()
+              else
+                withTempDir "polltimeout" (fn dir =>
+                  let val f = OS.Path.concat (dir, "timed")
+                  in
+                    writeFile (f, "x");
+                    withFileDesc (f, fn ioDesc =>
+                      case Option.mapPartial OS.IO.pollDesc ioDesc of
+                          NONE => ()
+                        | SOME pd =>
+                            let
+                              val timer = Timer.startRealTimer ()
+                              val infos =
+                                OS.IO.poll ([OS.IO.pollIn pd],
+                                            SOME (Time.fromSeconds
+                                                    (LargeInt.fromInt 10)))
+                              val elapsed = Timer.checkRealTimer timer
+                            in
+                              A.that "a ready descriptor is reported at once"
+                                (Time.< (elapsed,
+                                         Time.fromSeconds (LargeInt.fromInt 5)));
+                              A.eqInt "and it is reported" (1, List.length infos)
+                            end)
+                  end)),
+
+          (* "This will raise OS.SysErr if, for example, iod refers to a
+           * closed file." *)
+          Case ("kind of a closed descriptor is an error",
+            fn () =>
+              if not C.hasFileSystem then ()
+              else
+                withTempDir "closedkind" (fn dir =>
+                  let
+                    val f = OS.Path.concat (dir, "closed")
+                    val () = writeFile (f, "x")
+                    val ins = TextIO.openIn f
+                    val (rd, _) =
+                      TextIO.StreamIO.getReader (TextIO.getInstream ins)
+                    val TextPrimIO.RD { ioDesc, close, ... } = rd
+                  in
+                    close ();
+                    case ioDesc of
+                        NONE => ()
+                      | SOME d =>
+                          A.raises "a closed descriptor"
+                            (fn OS.SysErr _ => true | _ => false)
+                            (fn () => OS.IO.kind d)
                   end)),
 
           Group ("both directions on one descriptor",
@@ -538,8 +744,50 @@ functor OSFileSysTestsFn (C : TEST_CONFIG) =
                 (Time.>= (Timer.checkRealTimer t, Time.zeroTime))
             end),
 
+          (* "If t is zero or negative, then the calling process does not
+           * sleep, but returns immediately.  No exception is raised." *)
           Case ("sleeping for no time at all is allowed", fn () =>
-            A.noRaise "zero sleep" (fn () => OS.Process.sleep Time.zeroTime))
+            A.noRaise "zero sleep" (fn () => OS.Process.sleep Time.zeroTime)),
+
+          Case ("a positive sleep advances the real clock", fn () =>
+            let
+              val t = Timer.startRealTimer ()
+              val () = OS.Process.sleep
+                         (Time.fromMilliseconds (LargeInt.fromInt 50))
+              val elapsed = Timer.checkRealTimer t
+            in
+              A.that ("at least a millisecond passed, got "
+                      ^ Time.toString elapsed)
+                (Time.>= (elapsed,
+                          Time.fromMilliseconds (LargeInt.fromInt 1)))
+            end),
+
+          (* "success ... The unique status value that signifies successful
+           * termination", and isSuccess reports it. *)
+          Case ("the status of a child process is a status value", fn () =>
+            if not C.canSpawnProcesses then ()
+            else
+              let
+                val ok = OS.Process.system "exit 0"
+                val bad = OS.Process.system "exit 3"
+              in
+                A.eqBool "success is successful"
+                  (true, OS.Process.isSuccess ok);
+                A.eqBool "failure is not" (false, OS.Process.isSuccess bad);
+                A.eqBool "the failure constant is not a success"
+                  (false, OS.Process.isSuccess OS.Process.failure)
+              end)
+        ]
+        (* The negative half of the sleep sentence, behind a flag because
+         * SML/NJ 2026.1 blocks forever on it rather than returning; see
+         * negativeSleepReturns. *)
+        @ onlyIf (C.negativeSleepReturns,
+                  "implementation not declared to return from a negative sleep")
+        [ Case ("sleeping for a negative time returns at once", fn () =>
+            A.noRaise "a negative sleep"
+              (fn () => OS.Process.sleep
+                          (Time.- (Time.zeroTime,
+                                   Time.fromSeconds (LargeInt.fromInt 5)))))
         ])
       ])
   end
