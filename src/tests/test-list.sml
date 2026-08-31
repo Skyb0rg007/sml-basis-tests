@@ -155,6 +155,48 @@ functor ListTestsFn (C : TEST_CONFIG) =
              A.eqBool "all miss" (false, List.all even [2, 3]);
              A.eqBool "all on empty" (true, List.all even []))),
 
+          (* "applies f to each element x of the list l, from left to right,
+           * until f x evaluates to true" -- so the traversal stops at the
+           * first decisive element. *)
+          Case ("find, exists and all stop at the first decisive element",
+            fn () =>
+              let
+                fun counting p =
+                  let val n = ref 0
+                  in (n, fn x => (n := !n + 1; p x)) end
+                val (fnd, pf) = counting even
+                val (exs, pe) = counting even
+                val (alls, pa) = counting even
+              in
+                A.eqIntOption "find" (SOME 2, List.find pf [1, 2, 3, 4]);
+                A.eqInt "find stopped after the hit" (2, !fnd);
+                A.eqBool "exists" (true, List.exists pe [1, 2, 3, 4]);
+                A.eqInt "exists stopped after the hit" (2, !exs);
+                A.eqBool "all" (false, List.all pa [2, 3, 4]);
+                A.eqInt "all stopped after the miss" (2, !alls)
+              end),
+
+          Case ("map, mapPartial, filter and partition go left to right",
+            fn () =>
+              let
+                fun recording () =
+                  let val seen = ref []
+                  in (seen, fn x => (seen := x :: !seen; x)) end
+                val (m, fm) = recording ()
+                val (mp, fmp) = recording ()
+                val (fl, ffl) = recording ()
+                val (pt, fpt) = recording ()
+              in
+                ignore (List.map fm [1, 2, 3]);
+                A.eqIntList "map" ([3, 2, 1], !m);
+                ignore (List.mapPartial (fn x => SOME (fmp x)) [1, 2, 3]);
+                A.eqIntList "mapPartial" ([3, 2, 1], !mp);
+                ignore (List.filter (fn x => even (ffl x)) [1, 2, 3]);
+                A.eqIntList "filter" ([3, 2, 1], !fl);
+                ignore (List.partition (fn x => even (fpt x)) [1, 2, 3]);
+                A.eqIntList "partition" ([3, 2, 1], !pt)
+              end),
+
           Case ("collate", fn () =>
             (A.eqOrder "equal" (EQUAL, List.collate Int.compare ([1, 2], [1, 2]));
              A.eqOrder "prefix is less"
@@ -288,6 +330,76 @@ functor ListTestsFn (C : TEST_CONFIG) =
           P.forAll ("a proper prefix collates as LESS",
                     G.pair (ints, ints1), Show.pair (showInts, showInts),
                     fn (xs, ys) => List.collate Int.compare (xs, xs @ ys) = LESS),
+
+          (* "The above expression is equivalent to:
+           *  ((map valOf) o (filter isSome) o (map f)) l" *)
+          P.forAll ("mapPartial is map, filter isSome, map valOf",
+                    ints, showInts,
+                    fn xs =>
+                      let
+                        val f = fn n => if even n then SOME (n * 2) else NONE
+                      in
+                        List.mapPartial f xs
+                        = ((List.map valOf) o (List.filter isSome)
+                           o (List.map f)) xs
+                      end),
+
+          (* "concat[l1,l2,...ln] = l1 @ l2 @ ... @ ln" *)
+          P.forAll ("concat is a fold of append",
+                    G.list ints, Show.list showInts,
+                    fn xss => List.concat xss = List.foldr (op @) [] xss),
+
+          (* "foldl f init [x1, x2, ..., xn] returns
+           *  f(xn,...,f(x2, f(x1, init))...)", and the dual for foldr.  The
+           * combining operator is non-commutative so that the nesting is
+           * observable, and the comparison is against the recursion the
+           * specification writes out rather than against another fold. *)
+          P.forAll ("foldl nests as the specification writes it",
+                    ints, showInts,
+                    fn xs =>
+                      let
+                        val f = fn (x, a) => "(" ^ a ^ ")" ^ Int.toString x
+                        fun spec (a, []) = a
+                          | spec (a, x :: rest) = spec (f (x, a), rest)
+                      in
+                        List.foldl f "z" xs = spec ("z", xs)
+                      end),
+
+          P.forAll ("foldr nests as the specification writes it",
+                    ints, showInts,
+                    fn xs =>
+                      let
+                        val f = fn (x, a) => "(" ^ a ^ ")" ^ Int.toString x
+                        fun spec (a, []) = a
+                          | spec (a, x :: rest) = f (x, spec (a, rest))
+                      in
+                        List.foldr f "z" xs = spec ("z", xs)
+                      end),
+
+          P.forAll ("app visits every element from left to right",
+                    ints, showInts,
+                    fn xs =>
+                      let
+                        val seen = ref []
+                        val () = List.app (fn x => seen := x :: !seen) xs
+                      in
+                        List.rev (!seen) = xs
+                      end),
+
+          P.forAll ("take of the whole list is the list, drop of it is empty",
+                    ints, showInts,
+                    fn xs =>
+                      List.take (xs, List.length xs) = xs
+                      andalso List.drop (xs, List.length xs) = []),
+
+          P.forAll ("nth at zero is hd", ints1, showInts,
+                    fn xs => List.nth (xs, 0) = List.hd xs),
+
+          P.forAll ("null and length agree", ints, showInts,
+                    fn xs => List.null xs = (List.length xs = 0)),
+
+          P.forAll ("length counts the elements", ints, showInts,
+                    fn xs => List.length xs = List.foldl (fn (_, a) => a + 1) 0 xs),
 
           P.forAll ("getItem agrees with hd and tl", ints, showInts,
                     fn xs =>

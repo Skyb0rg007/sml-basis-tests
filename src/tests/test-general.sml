@@ -91,6 +91,75 @@ functor GeneralTestsFn (C : TEST_CONFIG) =
             A.that "distinct refs with equal contents differ" (ref 1 <> ref 1)
           end),
 
+        (* "The name returned may be that of any exception constructor
+         * aliasing with ex." *)
+        Case ("exnName of an aliased exception names one of the aliases",
+          fn () =>
+            let
+              exception Alias = Marker
+            in
+              A.that "either name"
+                (exnName Alias = "Marker" orelse exnName Alias = "Alias")
+            end),
+
+        (* "The precise format of the message may vary between
+         * implementations and locales, but will at least contain the string
+         * exnName ex." *)
+        Case ("exnMessage contains exnName", fn () =>
+          let
+            fun check e =
+              A.that (exnName e ^ " appears in its message")
+                (String.isSubstring (exnName e) (exnMessage e))
+          in
+            List.app check
+              [Marker, MarkerWith 3, Div, Overflow, Subscript, Size,
+               Fail "boom", Domain, Chr, Span, Bind, Match]
+          end),
+
+        (* Each General exception is raised by the operation the description
+         * names it for: Chr by chr, Size by an over-large or negative
+         * aggregate, Span by an incompatible pair of substrings, Div by
+         * division by zero, Subscript by an index out of range and Overflow
+         * by an unrepresentable arithmetic result. *)
+        Case ("the General exceptions are raised where they are specified",
+          fn () =>
+            (A.raises "chr out of range" A.isChr
+               (fn () => Char.chr (A.hide (Char.maxOrd + 1)));
+             A.raises "a negative array size" A.isSize
+               (fn () => Array.array (A.hide ~1, 0));
+             A.raises "span of unrelated substrings" A.isSpan
+               (fn () =>
+                  Substring.span (Substring.full "a", Substring.full "b"));
+             A.raises "an index out of range" A.isSubscript
+               (fn () => List.nth ([1, 2, 3], A.hide 5));
+             A.raises "division by zero" A.isDiv
+               (fn () => 1 div (A.hide 0)))),
+
+        P.forAll ("o is application of one function to the result of the other",
+                  G.smallInt, Show.int, fn n =>
+          let
+            val f = fn x => x + 1
+            val g = fn x => x * 2
+          in
+            (f o g) n = f (g n)
+          end),
+
+        P.forAll ("before returns its first argument and evaluates its second",
+                  G.smallInt, Show.int, fn n =>
+          let
+            val cell = ref 0
+            val v = n before (cell := n + 1)
+          in
+            v = n andalso !cell = n + 1
+          end),
+
+        P.forAll ("assignment then dereference returns what was assigned",
+                  G.pair (G.smallInt, G.smallInt),
+                  Show.pair (Show.int, Show.int),
+                  fn (a, b) =>
+                    let val r = ref a
+                    in !r = a andalso (r := b; !r = b) end),
+
         P.forAll ("o is associative", G.smallInt, Show.int, fn n =>
           let
             val f = fn x => x + 1

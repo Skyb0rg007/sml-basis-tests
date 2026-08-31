@@ -43,8 +43,49 @@ functor BoolTestsFn (C : TEST_CONFIG) =
                 (A.eqBool "value" (false, b);
                  A.eqString "remainder" (" tail", Substring.string rest))),
 
+        (* "Ignoring case and initial whitespace, the sequences \"true\" and
+         * \"false\" are converted to the corresponding boolean values." *)
+        Case ("fromString ignores case", fn () =>
+          (A.eqBy (op =, Show.option Show.bool) "TRUE"
+             (SOME true, Bool.fromString "TRUE");
+           A.eqBy (op =, Show.option Show.bool) "False"
+             (SOME false, Bool.fromString "False");
+           A.eqBy (op =, Show.option Show.bool) "tRuE"
+             (SOME true, Bool.fromString "tRuE");
+           A.eqBy (op =, Show.option Show.bool) "fALSE"
+             (SOME false, Bool.fromString "fALSE"))),
+
+        Case ("fromString rejects a proper prefix", fn () =>
+          (A.eqBy (op =, Show.option Show.bool) "tru"
+             (NONE, Bool.fromString "tru");
+           A.eqBy (op =, Show.option Show.bool) "fals"
+             (NONE, Bool.fromString "fals"))),
+
+        Case ("scan skips leading whitespace and reports the rest", fn () =>
+          case Bool.scan Substring.getc (Substring.full " \t\n true rest") of
+              NONE => A.fail "scan returned NONE"
+            | SOME (b, rest) =>
+                (A.eqBool "value" (true, b);
+                 A.eqString "remainder" (" rest", Substring.string rest))),
+
+        Case ("scan declines a non-boolean", fn () =>
+          (A.that "yes" (not (isSome (Bool.scan Substring.getc
+                                        (Substring.full "yes"))));
+           A.that "empty" (not (isSome (Bool.scan Substring.getc
+                                          (Substring.full "")))))),
+
         P.forAll ("not is an involution", G.bool, Show.bool,
                   fn b => not (not b) = b),
+
+        (* "The function fromString is equivalent to StringCvt.scanString
+         * scan." *)
+        P.forAll ("fromString is scanString scan",
+                  G.oneOf [ G.printableString,
+                            G.map (fn (b, s) => Bool.toString b ^ s)
+                                  (G.pair (G.bool, G.printableString)) ],
+                  Show.string,
+                  fn s =>
+                    Bool.fromString s = StringCvt.scanString Bool.scan s),
 
         P.forAll ("fromString inverts toString", G.bool, Show.bool,
                   fn b => Bool.fromString (Bool.toString b) = SOME b),

@@ -104,6 +104,46 @@ functor OptionTestsFn (C : TEST_CONFIG) =
                     let val f = fn n => if n mod 2 = 0 then SOME n else NONE
                     in Option.mapPartial f opt = Option.join (Option.map f opt) end),
 
+        (* "The expression compose (f, g) is equivalent to (map f) o g." *)
+        P.forAll ("compose f g = map f o g",
+                  G.smallInt, Show.int,
+                  fn n =>
+                    let
+                      val f = fn m => m + 1
+                      val g = fn m => if m mod 3 = 0 then NONE else SOME (m * 2)
+                    in
+                      Option.compose (f, g) n = (Option.map f o g) n
+                    end),
+
+        (* "The expression composePartial (f, g) is equivalent to
+         * (mapPartial f) o g." *)
+        P.forAll ("composePartial f g = mapPartial f o g",
+                  G.smallInt, Show.int,
+                  fn n =>
+                    let
+                      val f = fn m => if m mod 2 = 0 then SOME (m + 1) else NONE
+                      val g = fn m => if m mod 3 = 0 then NONE else SOME (m * 2)
+                    in
+                      Option.composePartial (f, g) n
+                      = (Option.mapPartial f o g) n
+                    end),
+
+        P.forAll ("app runs the function exactly when the option is SOME",
+                  optInt, showOptInt,
+                  fn opt =>
+                    let
+                      val cell = ref 0
+                      val () = Option.app (fn n => cell := !cell + 1) opt
+                    in
+                      !cell = (if isSome opt then 1 else 0)
+                    end),
+
+        P.forAll ("map applies the function under SOME",
+                  optInt, showOptInt,
+                  fn opt =>
+                    Option.map (fn n => n + 1) opt
+                    = (case opt of NONE => NONE | SOME v => SOME (v + 1))),
+
         P.forAll ("filter keeps exactly what the predicate accepts",
                   G.smallInt, Show.int,
                   fn n =>
