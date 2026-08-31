@@ -181,7 +181,107 @@ functor MonoVectorTestsFn (structure Seq : MONO_VECTOR
                   G.pair (genV, genV), Show.pair (showV, showV),
                   fn (a, b) =>
                     Seq.collate cmp (a, b)
-                    = List.collate Int.compare (ints a, ints b))
+                    = List.collate Int.compare (ints a, ints b)),
+
+        (* "The expression app f vec is equivalent to appi (f o #2) vec", and
+         * the same shape of equivalence for map, foldl and foldr. *)
+        P.forAll ("the plain traversals are the indexed ones with the index dropped",
+                  genV, showV,
+                  fn v =>
+                    let
+                      val seen = ref []
+                      val () = Seq.app (fn x => seen := toInt x :: !seen) v
+                      val seenI = ref []
+                      val () = Seq.appi ((fn x => seenI := toInt x :: !seenI) o #2) v
+                      val f = fn (x, acc) => acc ^ Int.toString (toInt x)
+                    in
+                      !seen = !seenI
+                      andalso ints (Seq.map (fn x => x) v)
+                              = ints (Seq.mapi #2 v)
+                      andalso Seq.foldl f "z" v
+                              = Seq.foldli (fn (_, x, acc) => f (x, acc)) "z" v
+                      andalso Seq.foldr f "z" v
+                              = Seq.foldri (fn (_, x, acc) => f (x, acc)) "z" v
+                    end),
+
+        P.forAll ("foldli sees every index in decreasing order", genV, showV,
+                  fn v =>
+                    Seq.foldli (fn (i, _, a) => i :: a) [] v
+                    = List.rev (List.tabulate (Seq.length v, fn i => i))),
+
+        P.forAll ("findi reports the first index satisfying the predicate",
+                  genV, showV,
+                  fn v =>
+                    let
+                      val p = fn x => toInt x > 100
+                      fun search i =
+                        if i >= Seq.length v then NONE
+                        else if p (Seq.sub (v, i))
+                        then SOME (i, toInt (Seq.sub (v, i)))
+                        else search (i + 1)
+                    in
+                      Option.map (fn (i, x) => (i, toInt x))
+                                 (Seq.findi (fn (_, x) => p x) v)
+                      = search 0
+                    end),
+
+        P.forAll ("find agrees with List.find", genV, showV,
+                  fn v =>
+                    let val p = fn n => n > 100
+                    in
+                      Option.map toInt (Seq.find (fn x => p (toInt x)) v)
+                      = List.find p (ints v)
+                    end),
+
+        (* "It is equivalent to not(exists (not o f) vec)." *)
+        P.forAll ("all is the negation of exists over the negated predicate",
+                  genV, showV,
+                  fn v =>
+                    let val p = fn x => toInt x > 100
+                    in Seq.all p v = not (Seq.exists (not o p) v) end),
+
+        P.forAll ("concat is the concatenation of the contents",
+                  G.list genV, Show.list showV,
+                  fn vs =>
+                    ints (Seq.concat vs) = List.concat (List.map ints vs)),
+
+        (* "the elements are defined in order of increasing index" *)
+        P.forAll ("tabulate applies its function in increasing index order",
+                  G.int (0, 20), Show.int,
+                  fn n =>
+                    let
+                      val seen = ref []
+                      val v = Seq.tabulate (n, fn i => (seen := i :: !seen; elem i))
+                    in
+                      List.rev (!seen) = List.tabulate (n, fn i => i)
+                      andalso ints v = List.tabulate (n, fn i => i)
+                    end),
+
+        (* "This is equivalent to the expression fromList (List.tabulate
+         * (n, f))." *)
+        P.forAll ("tabulate is fromList of List.tabulate", G.int (0, 20), Show.int,
+                  fn n =>
+                    ints (Seq.tabulate (n, fn i => elem (i * 2)))
+                    = ints (Seq.fromList (List.tabulate (n, fn i => elem (i * 2))))),
+
+        P.forAll ("find, exists and all stop at the first decision",
+                  G.int (1, 20), Show.int,
+                  fn n =>
+                    let
+                      val v = Seq.tabulate (n, fn i => elem i)
+                      val calls = ref 0
+                      val p = fn x => (calls := !calls + 1; toInt x >= 0)
+                      val _ = Seq.find p v
+                      val found = !calls
+                      val () = calls := 0
+                      val _ = Seq.exists p v
+                      val existed = !calls
+                      val () = calls := 0
+                      val _ = Seq.all (fn x => (calls := !calls + 1;
+                                                toInt x < 0)) v
+                    in
+                      found = 1 andalso existed = 1 andalso !calls = 1
+                    end)
       ])
   end
 
@@ -252,11 +352,39 @@ functor MonoArrayTestsFn (structure Seq : MONO_ARRAY
               (fn () => Seq.copy { src = ofInts [1], dst = dst, di = A.hide ~1 })
           end),
 
+        (* "In copy, if dst and src are equal, we must have di = 0 to avoid
+         * an exception, and copy is then the identity." *)
         Case ("copying onto itself changes nothing", fn () =>
           let val a = ofInts [1, 2, 3, 4, 5]
           in
             Seq.copy { src = a, dst = a, di = 0 };
-            A.eqIntList "unchanged" ([1, 2, 3, 4, 5], ints a)
+            A.eqIntList "unchanged" ([1, 2, 3, 4, 5], ints a);
+            A.raises "at any other offset" A.isSubscript
+              (fn () => Seq.copy { src = a, dst = a, di = A.hide 1 })
+          end),
+
+        Case ("copyVec checks both bounds", fn () =>
+          let
+            val dst = Seq.array (2, elem 0)
+          in
+            A.raises "negative offset" A.isSubscript
+              (fn () => Seq.copyVec { src = Seq.vector (ofInts [1]),
+                                      dst = dst, di = A.hide ~1 });
+            A.raises "past the end" A.isSubscript
+              (fn () => Seq.copyVec { src = Seq.vector (ofInts [1, 2, 3]),
+                                      dst = dst, di = A.hide 0 });
+            A.noRaise "an empty source at the far end"
+              (fn () => Seq.copyVec { src = Seq.vector (ofInts []),
+                                      dst = dst, di = 2 })
+          end),
+
+        Case ("tabulate applies its function in increasing index order", fn () =>
+          let
+            val seen = ref []
+            val a = Seq.tabulate (4, fn i => (seen := i :: !seen; elem i))
+          in
+            A.eqIntList "the order of the calls" ([0, 1, 2, 3], List.rev (!seen));
+            A.eqIntList "the result" ([0, 1, 2, 3], ints a)
           end),
 
         Case ("app, appi, modify and modifyi", fn () =>
@@ -350,6 +478,106 @@ functor MonoArrayTestsFn (structure Seq : MONO_ARRAY
 
         P.forAll ("vector round trips the contents", genInts, Show.intList,
                   fn ns => vectorToInts (Seq.vector (ofInts ns)) = ns),
+
+        (* "the result is equivalent to
+         *  Vector.tabulate (length arr, fn i => sub (arr, i))" *)
+        P.forAll ("vector is the tabulation of the subscripts",
+                  genInts, Show.intList,
+                  fn ns =>
+                    let val a = ofInts ns
+                    in
+                      vectorToInts (Seq.vector a)
+                      = List.tabulate (Seq.length a,
+                                       fn i => toInt (Seq.sub (a, i)))
+                    end),
+
+        (* "The expression modify f arr is equivalent to
+         *  modifyi (f o #2) arr", and the same for app, foldl and foldr. *)
+        P.forAll ("the plain traversals are the indexed ones with the index dropped",
+                  genInts, Show.intList,
+                  fn ns =>
+                    let
+                      (* Stays inside the element range for every instance:
+                       * a char cannot hold an arbitrary product. *)
+                      val f = fn x => elem ((toInt x * 3 + 1) mod 128)
+                      val a = ofInts ns
+                      val b = ofInts ns
+                      val () = Seq.modify f a
+                      val () = Seq.modifyi (f o #2) b
+                      val c = ofInts ns
+                      val g = fn (x, acc) => acc ^ Int.toString (toInt x)
+                      val seen = ref []
+                      val () = Seq.app (fn x => seen := toInt x :: !seen) c
+                      val seenI = ref []
+                      val () = Seq.appi ((fn x => seenI := toInt x :: !seenI) o #2) c
+                    in
+                      ints a = ints b
+                      andalso !seen = !seenI
+                      andalso Seq.foldl g "z" c
+                              = Seq.foldli (fn (_, x, acc) => g (x, acc)) "z" c
+                      andalso Seq.foldr g "z" c
+                              = Seq.foldri (fn (_, x, acc) => g (x, acc)) "z" c
+                    end),
+
+        P.forAll ("the indexed traversals see every index in order",
+                  genInts, Show.intList,
+                  fn ns =>
+                    let
+                      val a = ofInts ns
+                      val n = List.length ns
+                      val seen = ref []
+                      val () = Seq.appi (fn (i, _) => seen := i :: !seen) a
+                      val touched = ref []
+                      val () = Seq.modifyi (fn (i, x) => (touched := i :: !touched; x)) a
+                    in
+                      List.rev (!seen) = List.tabulate (n, fn i => i)
+                      andalso List.rev (!touched) = List.tabulate (n, fn i => i)
+                      andalso ints a = ns
+                      andalso Seq.foldli (fn (i, _, acc) => i :: acc) [] a
+                              = List.rev (List.tabulate (n, fn i => i))
+                      andalso Seq.foldri (fn (i, _, acc) => i :: acc) [] a
+                              = List.tabulate (n, fn i => i)
+                    end),
+
+        P.forAll ("findi reports the first index satisfying the predicate",
+                  genInts, Show.intList,
+                  fn ns =>
+                    let
+                      val a = ofInts ns
+                      val p = fn n => n > 100
+                      fun search i =
+                        if i >= List.length ns then NONE
+                        else if p (List.nth (ns, i))
+                        then SOME (i, List.nth (ns, i))
+                        else search (i + 1)
+                    in
+                      Option.map (fn (i, x) => (i, toInt x))
+                                 (Seq.findi (fn (_, x) => p (toInt x)) a)
+                      = search 0
+                      andalso Option.map toInt (Seq.find (fn x => p (toInt x)) a)
+                              = List.find p ns
+                      andalso Seq.all (fn x => p (toInt x)) a
+                              = not (Seq.exists (fn x => not (p (toInt x))) a)
+                    end),
+
+        (* "the i(th) element in src ... being copied to position di + i in
+         * the destination array" *)
+        P.forAll ("copy and copyVec place the source at the offset",
+                  G.bind genInts (fn ns =>
+                    G.map (fn k => (ns, k)) (G.int (0, 4))),
+                  Show.pair (Show.intList, Show.int),
+                  fn (ns, k) =>
+                    let
+                      val n = List.length ns
+                      val dst = Seq.array (n + k, elem 0)
+                      val dst2 = Seq.array (n + k, elem 0)
+                    in
+                      Seq.copy { src = ofInts ns, dst = dst, di = k };
+                      Seq.copyVec { src = Seq.vector (ofInts ns),
+                                    dst = dst2, di = k };
+                      ints dst = List.tabulate (k, fn _ => 0) @ ns
+                      andalso ints dst2 = List.tabulate (k, fn _ => 0) @ ns
+                    end),
 
         P.forAll ("collate agrees with List.collate",
                   G.pair (genInts, genInts),

@@ -142,6 +142,44 @@ functor VectorTestsFn (C : TEST_CONFIG) =
               A.eqBool "all on empty" (true, Vector.all (fn _ => false) empty)
             end),
 
+          (* "until a true value is returned" / "until f(x) evaluates to
+           * true": the traversal stops at the first decisive element. *)
+          Case ("find, findi, exists and all stop at the first decision",
+            fn () =>
+              let
+                val v = Vector.fromList [1, 2, 3, 4]
+                fun counting p =
+                  let val n = ref 0
+                  in (n, fn x => (n := !n + 1; p x)) end
+                val (a, pa) = counting (fn x => x mod 2 = 0)
+                val (b, pb) = counting (fn x => x mod 2 = 0)
+                val (c, pc) = counting (fn x => x mod 2 = 0)
+                val (d, pd) = counting (fn x => x mod 2 = 0)
+              in
+                A.eqIntOption "find" (SOME 2, Vector.find pa v);
+                A.eqInt "find stopped" (2, !a);
+                A.eqBy (op =, Show.option (Show.pair (Show.int, Show.int)))
+                  "findi" (SOME (1, 2), Vector.findi (fn (_, x) => pb x) v);
+                A.eqInt "findi stopped" (2, !b);
+                A.eqBool "exists" (true, Vector.exists pc v);
+                A.eqInt "exists stopped" (2, !c);
+                A.eqBool "all" (false, Vector.all pd v);
+                A.eqInt "all stopped" (1, !d)
+              end),
+
+          (* "the elements are defined in order of increasing index by
+           * applying f to the element's index" *)
+          Case ("tabulate applies its function in increasing index order",
+            fn () =>
+              let
+                val seen = ref []
+                val v = Vector.tabulate (4, fn i => (seen := i :: !seen; i))
+              in
+                A.eqIntList "the order of the calls" ([0, 1, 2, 3],
+                  List.rev (!seen));
+                A.eqIntList "the result" ([0, 1, 2, 3], toList v)
+              end),
+
           Case ("collate", fn () =>
             (A.eqOrder "equal" (EQUAL,
                Vector.collate Int.compare
@@ -230,6 +268,91 @@ functor VectorTestsFn (C : TEST_CONFIG) =
                     fn v =>
                       Vector.exists (fn x => x > 0) v
                       = not (Vector.all (fn x => x <= 0) v)),
+
+          (* "These are respectively equivalent to:
+           *  List.app f (foldri (fn (i,a,l) => (i,a)::l) [] vec)
+           *  List.app f (foldr (fn (a,l) => a::l) [] vec)" *)
+          P.forAll ("appi and app are List.app over the indexed elements",
+                    vec, showV,
+                    fn v =>
+                      let
+                        val seen = ref []
+                        val () = Vector.appi (fn (i, x) => seen := (i, x) :: !seen) v
+                        val expected = ref []
+                        val () = List.app (fn p => expected := p :: !expected)
+                                   (Vector.foldri (fn (i, a, l) => (i, a) :: l) [] v)
+                        val seen2 = ref []
+                        val () = Vector.app (fn x => seen2 := x :: !seen2) v
+                      in
+                        !seen = !expected
+                        andalso !seen2 = Vector.foldl (fn (a, l) => a :: l) [] v
+                      end),
+
+          P.forAll ("mapi and map are List.map over the indexed elements",
+                    vec, showV,
+                    fn v =>
+                      let val f = fn (i, x) => i * 100 + x
+                      in
+                        Vector.mapi f v
+                        = Vector.fromList
+                            (List.map f
+                               (Vector.foldri (fn (i, a, l) => (i, a) :: l) [] v))
+                        andalso Vector.map (fn x => x + 1) v
+                                = Vector.fromList
+                                    (List.map (fn x => x + 1)
+                                       (Vector.foldr (fn (a, l) => a :: l) [] v))
+                      end),
+
+          (* "The last two expressions are respectively equivalent to:
+           *  foldli (fn (_, a, x) => f(a, x)) init vec
+           *  foldri (fn (_, a, x) => f(a, x)) init vec" *)
+          P.forAll ("foldl and foldr are the indexed folds with the index dropped",
+                    vec, showV,
+                    fn v =>
+                      let val f = fn (a, x) => x ^ Int.toString a
+                      in
+                        Vector.foldl f "z" v
+                        = Vector.foldli (fn (_, a, x) => f (a, x)) "z" v
+                        andalso Vector.foldr f "z" v
+                                = Vector.foldri (fn (_, a, x) => f (a, x)) "z" v
+                      end),
+
+          P.forAll ("foldri sees every index in decreasing order", vec, showV,
+                    fn v =>
+                      Vector.foldri (fn (i, _, acc) => i :: acc) [] v
+                      = List.tabulate (Vector.length v, fn i => i)),
+
+          P.forAll ("findi reports the first index satisfying the predicate",
+                    vec, showV,
+                    fn v =>
+                      let
+                        val p = fn x => x > 0
+                        fun search i =
+                          if i >= Vector.length v then NONE
+                          else if p (Vector.sub (v, i)) then SOME (i, Vector.sub (v, i))
+                          else search (i + 1)
+                      in
+                        Vector.findi (fn (_, x) => p x) v = search 0
+                      end),
+
+          (* "It is equivalent to not(exists (not o f) vec)." *)
+          P.forAll ("all is the negation of exists over the negated predicate",
+                    vec, showV,
+                    fn v =>
+                      let val p = fn x => x > 0
+                      in
+                        Vector.all p v = not (Vector.exists (not o p) v)
+                      end),
+
+          P.forAll ("update leaves the original vector alone",
+                    vecAndIndex, showVecAndIndex,
+                    fn (v, i) =>
+                      let
+                        val before' = toList v
+                        val _ = Vector.update (v, i, 99)
+                      in
+                        toList v = before'
+                      end),
 
           P.forAll ("collate agrees with List.collate",
                     G.pair (vec, vec), Show.pair (showV, showV),

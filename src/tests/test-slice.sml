@@ -129,7 +129,34 @@ functor SliceTestsFn (C : TEST_CONFIG) =
             A.eqOrder "equal windows on different vectors" (EQUAL,
               VS.collate Int.compare
                 (VS.slice (Vector.fromList [9, 1, 2], 1, SOME 2),
-                 VS.full (Vector.fromList [1, 2]))))
+                 VS.full (Vector.fromList [1, 2])))),
+
+          Case ("slice and subslice check every bound", fn () =>
+            let
+              val v = Vector.fromList [1, 2, 3, 4, 5]
+              val s = VS.slice (v, 1, SOME 3)
+            in
+              A.raises "negative length" A.isSubscript
+                (fn () => VS.slice (v, A.hide 1, SOME (A.hide ~1)));
+              A.raises "start past the end with a length" A.isSubscript
+                (fn () => VS.slice (v, A.hide 6, SOME (A.hide 0)));
+              A.eqInt "an empty slice at the very end is legal"
+                (0, VS.length (VS.slice (v, 5, SOME 0)));
+              A.raises "negative subslice start" A.isSubscript
+                (fn () => VS.subslice (s, A.hide ~1, NONE));
+              A.raises "negative subslice length" A.isSubscript
+                (fn () => VS.subslice (s, A.hide 0, SOME (A.hide ~1)));
+              A.raises "subslice start past the slice" A.isSubscript
+                (fn () => VS.subslice (s, A.hide 4, NONE));
+              A.eqInt "an empty subslice at the very end is legal"
+                (0, VS.length (VS.subslice (s, 3, NONE)));
+              A.raises "sub on a negative index" A.isSubscript
+                (fn () => VS.sub (s, A.hide ~1))
+            end),
+
+          Case ("getItem on an empty slice", fn () =>
+            A.that "no item"
+              (not (isSome (VS.getItem (VS.slice (Vector.fromList [1, 2], 1, SOME 0))))))
         ]),
 
         Group ("ArraySlice",
@@ -248,6 +275,59 @@ functor SliceTestsFn (C : TEST_CONFIG) =
                 | SOME (x, rest) =>
                     (A.eqInt "head" (2, x);
                      A.eqInt "rest length" (2, AS.length rest))
+            end),
+
+          Case ("exists, all, isEmpty and collate on an array slice", fn () =>
+            let
+              val s = AS.slice (Array.fromList [1, 2, 3, 4, 5], 1, SOME 3)
+            in
+              A.eqBool "exists" (true, AS.exists (fn x => x = 3) s);
+              A.eqBool "exists misses" (false, AS.exists (fn x => x = 5) s);
+              A.eqBool "all" (true, AS.all (fn x => x > 1) s);
+              A.eqBool "all misses" (false, AS.all (fn x => x > 2) s);
+              A.eqBool "not empty" (false, AS.isEmpty s);
+              A.eqBool "an empty window"
+                (true, AS.isEmpty (AS.slice (Array.fromList [1], 0, SOME 0)));
+              A.that "no item in an empty slice"
+                (not (isSome (AS.getItem
+                                (AS.slice (Array.fromList [1], 1, NONE)))));
+              A.eqOrder "collate of equal windows on different arrays" (EQUAL,
+                AS.collate Int.compare
+                  (s, AS.full (Array.fromList [2, 3, 4])));
+              A.eqOrder "a prefix is less" (LESS,
+                AS.collate Int.compare
+                  (AS.full (Array.fromList [2, 3]), s))
+            end),
+
+          Case ("slice, subslice and copy check every bound", fn () =>
+            let
+              val a = Array.fromList [1, 2, 3, 4, 5]
+              val s = AS.slice (a, 1, SOME 3)
+              val dst = Array.fromList [0, 0]
+            in
+              A.raises "negative start" A.isSubscript
+                (fn () => AS.slice (a, A.hide ~1, NONE));
+              A.raises "negative length" A.isSubscript
+                (fn () => AS.slice (a, A.hide 1, SOME (A.hide ~1)));
+              A.raises "start past the end" A.isSubscript
+                (fn () => AS.slice (a, A.hide 6, NONE));
+              A.eqInt "an empty slice at the very end is legal"
+                (0, AS.length (AS.slice (a, 5, NONE)));
+              A.raises "negative subslice start" A.isSubscript
+                (fn () => AS.subslice (s, A.hide ~1, NONE));
+              A.raises "sub on a negative index" A.isSubscript
+                (fn () => AS.sub (s, A.hide ~1));
+              A.raises "copy with a negative offset" A.isSubscript
+                (fn () => AS.copy {src = s, dst = dst, di = A.hide ~1});
+              A.raises "copy into a destination that is too small" A.isSubscript
+                (fn () => AS.copy {src = s, dst = dst, di = A.hide 0});
+              A.raises "copyVec with a negative offset" A.isSubscript
+                (fn () => AS.copyVec {src = VS.full (Vector.fromList [1, 2]),
+                                      dst = dst, di = A.hide ~1});
+              A.raises "copyVec into a destination that is too small"
+                A.isSubscript
+                (fn () => AS.copyVec {src = VS.full (Vector.fromList [1, 2, 3]),
+                                      dst = dst, di = A.hide 0})
             end)
         ]),
 
@@ -337,6 +417,158 @@ functor SliceTestsFn (C : TEST_CONFIG) =
                             | SOME (x, rest) => x :: drain rest
                       in
                         drain s = List.take (List.drop (xs, i), n)
+                      end),
+
+          (* "length sl ... is equivalent to #3 (base sl)", and
+           * "full arr ... is equivalent to slice(arr, 0, NONE)". *)
+          P.forAll ("length is the third component of base", windowed, showWindowed,
+                    fn (xs, i, n) =>
+                      let
+                        val v = Vector.fromList xs
+                        val s = VS.slice (v, i, SOME n)
+                        val (_, _, k) = VS.base s
+                      in
+                        VS.length s = k andalso k = n
+                      end),
+
+          P.forAll ("full is the slice from zero to the end", ints, showL,
+                    fn xs =>
+                      let
+                        val v = Vector.fromList xs
+                        val a = Array.fromList xs
+                      in
+                        VS.base (VS.full v) = VS.base (VS.slice (v, 0, NONE))
+                        andalso AS.base (AS.full a)
+                                = AS.base (AS.slice (a, 0, NONE))
+                      end),
+
+          (* "the result is equivalent to
+           *  Vector.tabulate (length sl, fn i => sub (sl, i))" *)
+          P.forAll ("vector is the tabulation of the subscripts",
+                    windowed, showWindowed,
+                    fn (xs, i, n) =>
+                      let
+                        val s = VS.slice (Vector.fromList xs, i, SOME n)
+                        val t = AS.slice (Array.fromList xs, i, SOME n)
+                      in
+                        VS.vector s
+                        = Vector.tabulate (VS.length s, fn k => VS.sub (s, k))
+                        andalso AS.vector t
+                                = Vector.tabulate (AS.length t,
+                                                   fn k => AS.sub (t, k))
+                      end),
+
+          (* "The expression app f sl is equivalent to appi (f o #2) sl", and
+           * likewise modify, foldl and foldr. *)
+          P.forAll ("the plain traversals are the indexed ones with the index dropped",
+                    windowed, showWindowed,
+                    fn (xs, i, n) =>
+                      let
+                        val s = VS.slice (Vector.fromList xs, i, SOME n)
+                        val f = fn (a, acc) => acc ^ Int.toString a
+                        val seen = ref []
+                        val () = VS.app (fn x => seen := x :: !seen) s
+                        val seenI = ref []
+                        val () = VS.appi ((fn x => seenI := x :: !seenI) o #2) s
+                      in
+                        !seen = !seenI
+                        andalso VS.foldl f "z" s
+                                = VS.foldli (fn (_, a, acc) => f (a, acc)) "z" s
+                        andalso VS.foldr f "z" s
+                                = VS.foldri (fn (_, a, acc) => f (a, acc)) "z" s
+                        andalso VS.map (fn x => x + 1) s
+                                = VS.mapi ((fn x => x + 1) o #2) s
+                      end),
+
+          P.forAll ("modify is modifyi with the index dropped",
+                    windowed, showWindowed,
+                    fn (xs, i, n) =>
+                      let
+                        val f = fn x => x * 3 + 1
+                        val a = Array.fromList xs
+                        val b = Array.fromList xs
+                      in
+                        AS.modify f (AS.slice (a, i, SOME n));
+                        AS.modifyi (f o #2) (AS.slice (b, i, SOME n));
+                        alist a = alist b
+                      end),
+
+          P.forAll ("the array slice folds agree with the indexed ones",
+                    windowed, showWindowed,
+                    fn (xs, i, n) =>
+                      let
+                        val t = AS.slice (Array.fromList xs, i, SOME n)
+                        val f = fn (a, acc) => acc ^ Int.toString a
+                      in
+                        AS.foldl f "z" t
+                        = AS.foldli (fn (_, a, acc) => f (a, acc)) "z" t
+                        andalso AS.foldr f "z" t
+                                = AS.foldri (fn (_, a, acc) => f (a, acc)) "z" t
+                        andalso AS.foldli (fn (k, _, acc) => k :: acc) [] t
+                                = List.rev (List.tabulate (n, fn k => k))
+                      end),
+
+          P.forAll ("isEmpty is a test on the length", windowed, showWindowed,
+                    fn (xs, i, n) =>
+                      let
+                        val s = VS.slice (Vector.fromList xs, i, SOME n)
+                        val t = AS.slice (Array.fromList xs, i, SOME n)
+                      in
+                        VS.isEmpty s = (VS.length s = 0)
+                        andalso AS.isEmpty t = (AS.length t = 0)
+                      end),
+
+          P.forAll ("find, exists and all agree with the list versions",
+                    windowed, showWindowed,
+                    fn (xs, i, n) =>
+                      let
+                        val window = List.take (List.drop (xs, i), n)
+                        val s = VS.slice (Vector.fromList xs, i, SOME n)
+                        val t = AS.slice (Array.fromList xs, i, SOME n)
+                        val p = fn x => x > 0
+                      in
+                        VS.find p s = List.find p window
+                        andalso VS.exists p s = List.exists p window
+                        andalso VS.all p s = List.all p window
+                        andalso AS.find p t = List.find p window
+                        andalso AS.exists p t = List.exists p window
+                        andalso AS.all p t = List.all p window
+                      end),
+
+          P.forAll ("collate on slices agrees with List.collate",
+                    G.pair (windowed, windowed),
+                    Show.pair (showWindowed, showWindowed),
+                    fn ((xs, i, n), (ys, j, m)) =>
+                      let
+                        val a = List.take (List.drop (xs, i), n)
+                        val b = List.take (List.drop (ys, j), m)
+                      in
+                        VS.collate Int.compare
+                          (VS.slice (Vector.fromList xs, i, SOME n),
+                           VS.slice (Vector.fromList ys, j, SOME m))
+                        = List.collate Int.compare (a, b)
+                        andalso AS.collate Int.compare
+                                  (AS.slice (Array.fromList xs, i, SOME n),
+                                   AS.slice (Array.fromList ys, j, SOME m))
+                                = List.collate Int.compare (a, b)
+                      end),
+
+          (* "the i(th) element of src ... being copied to position di + i in
+           * the destination array" *)
+          P.forAll ("copy and copyVec place the window at the offset",
+                    windowed, showWindowed,
+                    fn (xs, i, n) =>
+                      let
+                        val window = List.take (List.drop (xs, i), n)
+                        val dst = Array.array (n + 2, 0)
+                        val dst2 = Array.array (n + 2, 0)
+                      in
+                        AS.copy {src = AS.slice (Array.fromList xs, i, SOME n),
+                                 dst = dst, di = 2};
+                        AS.copyVec {src = VS.slice (Vector.fromList xs, i, SOME n),
+                                    dst = dst2, di = 2};
+                        alist dst = [0, 0] @ window
+                        andalso alist dst2 = [0, 0] @ window
                       end),
 
           P.forAll ("concat of slices is concatenation of their contents",

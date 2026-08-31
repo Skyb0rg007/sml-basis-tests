@@ -121,7 +121,33 @@ functor ArrayTestsFn (C : TEST_CONFIG) =
               A.eqIntList "copied" ([0, 0, 1, 2], toList dst);
               A.raises "past the end" A.isSubscript
                 (fn () => Array.copyVec {src = Vector.fromList [1, 2],
-                                         dst = dst, di = 3})
+                                         dst = dst, di = 3});
+              A.raises "negative offset" A.isSubscript
+                (fn () => Array.copyVec {src = Vector.fromList [1, 2],
+                                         dst = dst, di = ~1})
+            end),
+
+          (* "In copy, if dst and src are equal, we must have di = 0 to avoid
+           * an exception, and copy is then the identity." *)
+          Case ("copying an array onto itself requires a zero offset", fn () =>
+            let
+              val a = Array.fromList [1, 2, 3]
+            in
+              A.noRaise "at offset zero"
+                (fn () => Array.copy {src = a, dst = a, di = 0});
+              A.eqIntList "and changes nothing" ([1, 2, 3], toList a);
+              A.raises "at any other offset" A.isSubscript
+                (fn () => Array.copy {src = a, dst = a, di = A.hide 1})
+            end),
+
+          Case ("copying an empty source is always legal", fn () =>
+            let
+              val dst = Array.fromList [1, 2, 3]
+            in
+              A.noRaise "at the far end"
+                (fn () => Array.copy {src = Array.fromList ([] : int list),
+                                      dst = dst, di = 3});
+              A.eqIntList "and changes nothing" ([1, 2, 3], toList dst)
             end)
         ]),
 
@@ -171,6 +197,35 @@ functor ArrayTestsFn (C : TEST_CONFIG) =
               A.eqBool "exists" (true, Array.exists (fn x => x = 3) a);
               A.eqBool "all" (true, Array.all (fn x => x > 0) a)
             end),
+
+          Case ("find, findi, exists and all stop at the first decision",
+            fn () =>
+              let
+                val a = Array.fromList [1, 2, 3, 4]
+                fun counting p =
+                  let val n = ref 0
+                  in (n, fn x => (n := !n + 1; p x)) end
+                val (x, px) = counting (fn v => v mod 2 = 0)
+                val (y, py) = counting (fn v => v mod 2 = 0)
+                val (z, pz) = counting (fn v => v mod 2 = 0)
+              in
+                A.eqIntOption "find" (SOME 2, Array.find px a);
+                A.eqInt "find stopped" (2, !x);
+                A.eqBool "exists" (true, Array.exists py a);
+                A.eqInt "exists stopped" (2, !y);
+                A.eqBool "all" (false, Array.all pz a);
+                A.eqInt "all stopped" (1, !z)
+              end),
+
+          Case ("tabulate applies its function in increasing index order",
+            fn () =>
+              let
+                val seen = ref []
+                val a = Array.tabulate (4, fn i => (seen := i :: !seen; i))
+              in
+                A.eqIntList "the order of the calls" ([0, 1, 2, 3], List.rev (!seen));
+                A.eqIntList "the result" ([0, 1, 2, 3], toList a)
+              end),
 
           Case ("collate", fn () =>
             A.eqOrder "prefix is less" (LESS,
@@ -249,6 +304,141 @@ functor ArrayTestsFn (C : TEST_CONFIG) =
           P.forAll ("foldl with cons reverses", ints, Show.intList,
                     fn xs =>
                       Array.foldl op:: [] (Array.fromList xs) = List.rev xs),
+
+          (* "the result is equivalent to
+           *  Vector.tabulate (length arr, fn i => sub (arr, i))" *)
+          P.forAll ("vector is the tabulation of the subscripts",
+                    ints, Show.intList,
+                    fn xs =>
+                      let val a = Array.fromList xs
+                      in
+                        Array.vector a
+                        = Vector.tabulate (Array.length a,
+                                           fn i => Array.sub (a, i))
+                      end),
+
+          (* "The expression modify f arr is equivalent to
+           *  modifyi (f o #2) arr." *)
+          P.forAll ("modify is modifyi with the index dropped",
+                    ints, Show.intList,
+                    fn xs =>
+                      let
+                        val f = fn x => x * 3 + 1
+                        val a = Array.fromList xs
+                        val b = Array.fromList xs
+                      in
+                        Array.modify f a;
+                        Array.modifyi (f o #2) b;
+                        toList a = toList b
+                      end),
+
+          P.forAll ("modifyi sees every index in increasing order",
+                    ints, Show.intList,
+                    fn xs =>
+                      let
+                        val a = Array.fromList xs
+                        val seen = ref []
+                        val () = Array.modifyi (fn (i, x) => (seen := i :: !seen; x)) a
+                      in
+                        List.rev (!seen) = List.tabulate (List.length xs, fn i => i)
+                        andalso toList a = xs
+                      end),
+
+          P.forAll ("appi and app visit in increasing index order",
+                    ints, Show.intList,
+                    fn xs =>
+                      let
+                        val a = Array.fromList xs
+                        val seen = ref []
+                        val () = Array.appi (fn (i, x) => seen := (i, x) :: !seen) a
+                        val plain = ref []
+                        val () = Array.app (fn x => plain := x :: !plain) a
+                      in
+                        List.rev (!seen)
+                        = List.tabulate (List.length xs,
+                                         fn i => (i, List.nth (xs, i)))
+                        andalso List.rev (!plain) = xs
+                      end),
+
+          P.forAll ("foldl and foldr are the indexed folds with the index dropped",
+                    ints, Show.intList,
+                    fn xs =>
+                      let
+                        val a = Array.fromList xs
+                        val f = fn (v, acc) => acc ^ Int.toString v
+                      in
+                        Array.foldl f "z" a
+                        = Array.foldli (fn (_, v, acc) => f (v, acc)) "z" a
+                        andalso Array.foldr f "z" a
+                                = Array.foldri (fn (_, v, acc) => f (v, acc)) "z" a
+                      end),
+
+          P.forAll ("foldli and foldri see the indices in their two orders",
+                    ints, Show.intList,
+                    fn xs =>
+                      let
+                        val a = Array.fromList xs
+                        val n = List.length xs
+                      in
+                        Array.foldli (fn (i, _, acc) => i :: acc) [] a
+                        = List.rev (List.tabulate (n, fn i => i))
+                        andalso Array.foldri (fn (i, _, acc) => i :: acc) [] a
+                                = List.tabulate (n, fn i => i)
+                      end),
+
+          P.forAll ("findi reports the first index satisfying the predicate",
+                    ints, Show.intList,
+                    fn xs =>
+                      let
+                        val a = Array.fromList xs
+                        val p = fn x => x > 0
+                        fun search i =
+                          if i >= List.length xs then NONE
+                          else if p (List.nth (xs, i)) then SOME (i, List.nth (xs, i))
+                          else search (i + 1)
+                      in
+                        Array.findi (fn (_, x) => p x) a = search 0
+                      end),
+
+          P.forAll ("all is the negation of exists over the negated predicate",
+                    ints, Show.intList,
+                    fn xs =>
+                      let
+                        val a = Array.fromList xs
+                        val p = fn x => x > 0
+                      in
+                        Array.all p a = not (Array.exists (not o p) a)
+                      end),
+
+          (* "the i(th) element in src ... being copied to position di + i in
+           * the destination array" *)
+          P.forAll ("copy places the source at the destination offset",
+                    G.bind ints (fn xs =>
+                      G.map (fn k => (xs, k)) (G.int (0, 5))),
+                    Show.pair (Show.intList, Show.int),
+                    fn (xs, k) =>
+                      let
+                        val n = List.length xs
+                        val src = Array.fromList xs
+                        val dst = Array.array (n + k, 0)
+                      in
+                        Array.copy {src = src, dst = dst, di = k};
+                        toList dst
+                        = List.tabulate (k, fn _ => 0) @ xs
+                      end),
+
+          P.forAll ("copyVec places the source at the destination offset",
+                    G.bind ints (fn xs =>
+                      G.map (fn k => (xs, k)) (G.int (0, 5))),
+                    Show.pair (Show.intList, Show.int),
+                    fn (xs, k) =>
+                      let
+                        val n = List.length xs
+                        val dst = Array.array (n + k, 0)
+                      in
+                        Array.copyVec {src = Vector.fromList xs, dst = dst, di = k};
+                        toList dst = List.tabulate (k, fn _ => 0) @ xs
+                      end),
 
           P.forAll ("collate agrees with List.collate",
                     G.pair (ints, ints), Show.pair (Show.intList, Show.intList),
