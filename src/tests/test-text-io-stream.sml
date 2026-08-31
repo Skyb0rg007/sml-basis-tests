@@ -116,6 +116,83 @@ functor TextIOStreamTestsFn (C : TEST_CONFIG) =
           Case ("closeIn is accepted", fn () =>
             A.noRaise "closeIn" (fn () => SIO.closeIn (streamOf "abc"))),
 
+          (* "Applying closeIn on a closed stream has no effect."  The
+           * Discussion writes this as
+           *   fun closeTwice f = (TS.closeIn f; TS.closeIn f; true) *)
+          Case ("closing a functional stream twice is harmless", fn () =>
+            let val s = streamOf "abc"
+            in
+              A.noRaise "twice" (fn () => (SIO.closeIn s; SIO.closeIn s))
+            end),
+
+          (* The Discussion:
+           *   fun chkClose f = let val (a,f') = TS.input f
+           *                        val _ = TS.closeIn f
+           *                        val (b,_) = TS.input f
+           *                    in a=b andalso TS.endOfStream f' end *)
+          Case ("closing only empties the undetermined part of a stream",
+            fn () =>
+              let
+                val f = streamOf "abc"
+                val (a, f') = SIO.input f
+                val () = SIO.closeIn f
+                val (b, _) = SIO.input f
+              in
+                A.eqString "the determined part is unchanged" (a, b);
+                A.eqBool "and the rest is at end-of-stream"
+                  (true, SIO.endOfStream f')
+              end),
+
+          (* "Reading from a truncated input stream will never block; after
+           * all buffered elements are read, input operations always return
+           * empty vectors."  getReader truncates the stream. *)
+          Case ("a truncated stream reads as empty", fn () =>
+            let
+              val f = streamOf "abcde"
+              val (_, pending) = SIO.getReader f
+            in
+              A.eqString "input on the truncated stream" ("", #1 (SIO.input f));
+              A.eqBool "and it is at end-of-stream" (true, SIO.endOfStream f);
+              A.that "the pending data was handed over"
+                (String.size pending >= 0)
+            end),
+
+          (* "The function raises the exception Io if f is closed or
+           * truncated." *)
+          Case ("getReader may not be applied twice", fn () =>
+            let
+              val f = streamOf "abc"
+              val _ = SIO.getReader f
+            in
+              A.raises "a second getReader" A.isIo (fn () => SIO.getReader f)
+            end),
+
+          (* "The data returned will have the value (closeIn f; inputAll f)"
+           * -- that is, what the stream had already buffered, not the rest of
+           * the underlying source, since closing empties the undetermined
+           * part.  Two equivalent streams are used because the operation is
+           * destructive. *)
+          Case ("getReader hands back exactly what was buffered", fn () =>
+            let
+              val f = streamOf "abcde"
+              val (_, f') = SIO.inputN (f, 2)
+              val () = SIO.closeIn f'
+              val expected = #1 (SIO.inputAll f')
+              val g = streamOf "abcde"
+              val (_, g') = SIO.inputN (g, 2)
+              val (_, pending) = SIO.getReader g'
+            in
+              A.eqString "the unconsumed data" (expected, pending)
+            end),
+
+          (* "It raises Size if n < 0", for both inputN and canInput. *)
+          Case ("a negative count is rejected", fn () =>
+            (A.raises "inputN" A.isSize
+               (fn () => SIO.inputN (streamOf "abc", A.hide ~1));
+             (A.raises "canInput" A.isSize
+                (fn () => SIO.canInput (streamOf "abc", A.hide ~1)))
+             handle IO.Io { cause = IO.NonblockingNotSupported, ... } => ())),
+
           (* getReader hands back the underlying reader together with whatever
            * had already been buffered but not consumed. *)
           Case ("getReader recovers the primitive reader", fn () =>
@@ -344,7 +421,94 @@ functor TextIOStreamTestsFn (C : TEST_CONFIG) =
         ]),
 
         Group ("laws",
-        [ P.forAll ("a functional stream can be read twice with the same result",
+        [ (* "The endOfStream test is equivalent to input returning an empty
+           * sequence:
+           *   fun isEOS f = let val (a,_) = TS.input f
+           *                 in ((size a)=0) = (TS.endOfStream f) end" *)
+          P.forAll ("endOfStream is input returning nothing", str, showS,
+                    fn s =>
+                      let
+                        val f = streamOf s
+                        val (a, _) = SIO.input f
+                      in
+                        (String.size a = 0) = SIO.endOfStream f
+                      end),
+
+          (* "The semantics of inputAll can be defined in terms of input." *)
+          P.forAll ("inputAll is input repeated to the end", str, showS,
+                    fn s =>
+                      let
+                        fun all f =
+                          case SIO.input f of
+                              ("", f') => ""
+                            | (v, f') => v ^ all f'
+                      in
+                        #1 (SIO.inputAll (streamOf s)) = all (streamOf s)
+                      end),
+
+          (* "The semantics of input1 can be defined in terms of inputN." *)
+          P.forAll ("input1 is inputN of one", str, showS,
+                    fn s =>
+                      let
+                        val viaOne =
+                          Option.map #1 (SIO.input1 (streamOf s))
+                        val viaN =
+                          case SIO.inputN (streamOf s, 1) of
+                              ("", _) => NONE
+                            | (v, _) => SOME (String.sub (v, 0))
+                      in
+                        viaOne = viaN
+                      end),
+
+          (* The allAndN predicate from the Discussion: inputN returns fewer
+           * than n elements exactly when an end-of-stream follows them. *)
+          P.forAll ("inputN and inputAll agree",
+                    G.bind str (fn s =>
+                      G.map (fn n => (s, n)) (G.int (0, String.size s + 2))),
+                    Show.pair (showS, Show.int),
+                    fn (s, n) =>
+                      let
+                        val f = streamOf s
+                        val (a, f1) = SIO.inputN (f, n)
+                        val (t, _) = SIO.inputAll f
+                      in
+                        if String.size a < n then a = t
+                        else t = a ^ #1 (SIO.inputAll f1)
+                      end),
+
+          (* "If a stream has already been at least partly determined, then
+           * input cannot possibly block:
+           *   fun noBlock f = let val (s,_) = TS.input f
+           *                   in case TS.canInput (f, 1) of
+           *                        SOME 0 => (size s) = 0
+           *                      | SOME _ => (size s) > 0
+           *                      | NONE => false end" *)
+          P.forAll ("a determined stream never blocks", str, showS,
+                    fn s =>
+                      let
+                        val f = streamOf s
+                        val (v, _) = SIO.input f
+                      in
+                        (case SIO.canInput (f, 1) of
+                             SOME 0 => String.size v = 0
+                           | SOME _ => String.size v > 0
+                           | NONE => false)
+                        handle IO.Io { cause = IO.NonblockingNotSupported,
+                                       ... } => true
+                      end),
+
+          (* "inputN(f,0) returns immediately with an empty vector and f, so
+           * this cannot be used as an indication of end-of-stream." *)
+          P.forAll ("inputN of nothing returns the same stream", str, showS,
+                    fn s =>
+                      let
+                        val f = streamOf s
+                        val (v, f') = SIO.inputN (f, 0)
+                      in
+                        v = "" andalso #1 (SIO.input f') = #1 (SIO.input f)
+                      end),
+
+          P.forAll ("a functional stream can be read twice with the same result",
                     str, showS,
                     fn s =>
                       let

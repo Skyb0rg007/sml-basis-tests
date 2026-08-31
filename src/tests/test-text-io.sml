@@ -180,6 +180,115 @@ functor TextIOTestsFn (C : TEST_CONFIG) =
             in
               TextIO.closeIn ins;
               A.eqString "empty" ("", TextIO.inputAll ins)
+            end),
+
+          (* "Other operations on a closed stream will behave as if the stream
+           * is at end-of-stream." *)
+          Case ("every read on a closed stream sees the end of it", fn () =>
+            let
+              val ins = TextIO.openString "abc"
+            in
+              TextIO.closeIn ins;
+              A.eqCharOption "input1" (NONE, TextIO.input1 ins);
+              A.eqCharOption "lookahead" (NONE, TextIO.lookahead ins);
+              A.eqStringOption "inputLine" (NONE, TextIO.inputLine ins);
+              A.eqString "input" ("", TextIO.input ins);
+              A.eqString "inputN" ("", TextIO.inputN (ins, 3));
+              A.eqBool "endOfStream" (true, TextIO.endOfStream ins)
+            end),
+
+          (* "After a call to input1 returning NONE to indicate an
+           * end-of-stream, the input stream should be positioned after the
+           * end-of-stream." *)
+          Case ("input1 at the end stays at the end", fn () =>
+            let
+              val ins = TextIO.openString "a"
+            in
+              A.eqCharOption "the one character" (SOME #"a", TextIO.input1 ins);
+              A.eqCharOption "then nothing" (NONE, TextIO.input1 ins);
+              A.eqCharOption "and nothing again" (NONE, TextIO.input1 ins);
+              A.eqString "and inputN agrees" ("", TextIO.inputN (ins, 1));
+              TextIO.closeIn ins
+            end),
+
+          (* "It returns SOME(k), where 0 <= k <= n, if a call to input would
+           * return immediately with at least k characters.  Note that k = 0
+           * corresponds to the stream being at end-of-stream." *)
+          Case ("canInput reports what can be read without blocking", fn () =>
+            let
+              val ins = TextIO.openString "abc"
+              val empty = TextIO.openString ""
+              fun check (what, strm, n) =
+                case TextIO.canInput (strm, n) of
+                    NONE => ()   (* an answer of "would block" is allowed *)
+                  | SOME k =>
+                      A.that (what ^ ": 0 <= " ^ Int.toString k ^ " <= "
+                              ^ Int.toString n)
+                        (0 <= k andalso k <= n)
+            in
+              check ("three available, asking for two", ins, 2);
+              check ("three available, asking for ten", ins, 10);
+              (case TextIO.canInput (empty, 1) of
+                   NONE => ()
+                 | SOME k =>
+                     A.eqInt "an exhausted stream reports zero" (0, k));
+              TextIO.closeIn ins;
+              TextIO.closeIn empty
+            end
+            handle IO.Io { cause = IO.NonblockingNotSupported, ... } => ()),
+
+          (* "It raises the Size exception if n < 0", for canInput, and
+           * "It raises Size if n < 0" for inputN. *)
+          Case ("a negative count is rejected", fn () =>
+            let
+              val ins = TextIO.openString "abc"
+            in
+              A.raises "inputN" A.isSize
+                (fn () => TextIO.inputN (ins, A.hide ~1));
+              (A.raises "canInput" A.isSize
+                 (fn () => TextIO.canInput (ins, A.hide ~1)))
+              handle IO.Io { cause = IO.NonblockingNotSupported, ... } => ();
+              TextIO.closeIn ins
+            end),
+
+          (* "input ... When elements are available, it returns a vector of at
+           * least one element.  When strm is at end-of-stream or is closed,
+           * it returns an empty vector." *)
+          Case ("input returns something, then nothing", fn () =>
+            let
+              val ins = TextIO.openString "abc"
+              val first = TextIO.input ins
+            in
+              A.that "at least one character" (String.size first >= 1);
+              A.that "and it is a prefix of the string"
+                (String.isPrefix first "abc");
+              ignore (TextIO.inputAll ins);
+              A.eqString "nothing at the end" ("", TextIO.input ins);
+              TextIO.closeIn ins
+            end),
+
+          (* "converts a stream-based scan function into one that works on
+           * Imperative I/O streams", advancing the stream past what was
+           * scanned. *)
+          Case ("scanStream scans and advances the stream", fn () =>
+            let
+              val ins = TextIO.openString "42 rest"
+            in
+              A.eqIntOption "the scanned value"
+                (SOME 42, TextIO.scanStream (Int.scan StringCvt.DEC) ins);
+              A.eqString "and the stream moved past it"
+                (" rest", TextIO.inputAll ins);
+              TextIO.closeIn ins
+            end),
+
+          Case ("scanStream leaves the stream alone when it fails", fn () =>
+            let
+              val ins = TextIO.openString "abc"
+            in
+              A.eqIntOption "nothing scanned"
+                (NONE, TextIO.scanStream (Int.scan StringCvt.DEC) ins);
+              A.eqString "and nothing consumed" ("abc", TextIO.inputAll ins);
+              TextIO.closeIn ins
             end)
         ]),
 
@@ -258,6 +367,26 @@ functor TextIOTestsFn (C : TEST_CONFIG) =
                 OS.FileSys.remove path;
                 A.eqBool "removed" (false, OS.FileSys.access (path, []))
               end),
+
+            (* "A write attempt on a closed outstream will cause the
+             * exception Io{cause=ClosedStream,...} to be raised." *)
+            Case ("writing to a closed stream reports a closed stream",
+              fn () =>
+                let
+                  val () = ensureScratch ()
+                  val path = scratchFile "closed-out.txt"
+                  val outs = TextIO.openOut path
+                  val () = TextIO.closeOut outs
+                  fun isClosed (IO.Io { cause = IO.ClosedStream, ... }) = true
+                    | isClosed _ = false
+                in
+                  A.raises "output" isClosed
+                    (fn () => TextIO.output (outs, "x"));
+                  A.raises "output1" isClosed
+                    (fn () => TextIO.output1 (outs, #"x"));
+                  A.noRaise "closing twice" (fn () => TextIO.closeOut outs);
+                  removeQuietly path
+                end),
 
             Case ("fileSize agrees with what was written", fn () =>
               let

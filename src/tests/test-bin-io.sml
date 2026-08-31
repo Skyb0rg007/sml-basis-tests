@@ -129,6 +129,61 @@ functor BinIOTestsFn (C : TEST_CONFIG) =
             in
               BinIO.closeIn ins;
               A.noRaise "second close" (fn () => BinIO.closeIn ins)
+            end),
+
+          (* "Other operations on a closed stream will behave as if the stream
+           * is at end-of-stream." *)
+          Case ("every read on a closed stream sees the end of it", fn () =>
+            let
+              val ins = openBytes (ofInts [1, 2, 3])
+            in
+              BinIO.closeIn ins;
+              A.eqBy (op =, Show.option showB) "input1" (NONE, BinIO.input1 ins);
+              A.eqBy (op =, Show.option showB) "lookahead"
+                (NONE, BinIO.lookahead ins);
+              eqBytes "input" ([], toInts (BinIO.input ins));
+              eqBytes "inputN" ([], toInts (BinIO.inputN (ins, 3)));
+              eqBytes "inputAll" ([], toInts (BinIO.inputAll ins));
+              A.eqBool "endOfStream" (true, BinIO.endOfStream ins)
+            end),
+
+          Case ("input1 at the end stays at the end", fn () =>
+            let
+              val ins = openBytes (ofInts [7])
+            in
+              A.eqBy (op =, Show.option showB) "the one byte"
+                (SOME (b 7), BinIO.input1 ins);
+              A.eqBy (op =, Show.option showB) "then nothing"
+                (NONE, BinIO.input1 ins);
+              A.eqBy (op =, Show.option showB) "and nothing again"
+                (NONE, BinIO.input1 ins);
+              BinIO.closeIn ins
+            end),
+
+          (* "It raises Size if n < 0", for inputN and canInput alike. *)
+          Case ("a negative count is rejected", fn () =>
+            let
+              val ins = openBytes (ofInts [1, 2, 3])
+            in
+              A.raises "inputN" A.isSize
+                (fn () => BinIO.inputN (ins, A.hide ~1));
+              (A.raises "canInput" A.isSize
+                 (fn () => BinIO.canInput (ins, A.hide ~1)))
+              handle IO.Io { cause = IO.NonblockingNotSupported, ... } => ();
+              BinIO.closeIn ins
+            end),
+
+          (* "When elements are available, it returns a vector of at least one
+           * element." *)
+          Case ("input returns something, then nothing", fn () =>
+            let
+              val ins = openBytes (ofInts [1, 2, 3])
+              val first = BinIO.input ins
+            in
+              A.that "at least one byte" (W8V.length first >= 1);
+              ignore (BinIO.inputAll ins);
+              eqBytes "nothing at the end" ([], toInts (BinIO.input ins));
+              BinIO.closeIn ins
             end)
         ]),
 
@@ -279,6 +334,26 @@ functor BinIOTestsFn (C : TEST_CONFIG) =
                 removeQuietly path
               end),
 
+            (* "A write attempt on a closed outstream will cause the
+             * exception Io{cause=ClosedStream,...} to be raised." *)
+            Case ("writing to a closed stream reports a closed stream",
+              fn () =>
+                let
+                  val () = ensureScratch ()
+                  val path = scratchFile "bin-closed.bin"
+                  val outs = BinIO.openOut path
+                  val () = BinIO.closeOut outs
+                  fun isClosed (IO.Io { cause = IO.ClosedStream, ... }) = true
+                    | isClosed _ = false
+                in
+                  A.raises "output" isClosed
+                    (fn () => BinIO.output (outs, ofInts [1]));
+                  A.raises "output1" isClosed
+                    (fn () => BinIO.output1 (outs, b 1));
+                  A.noRaise "closing twice" (fn () => BinIO.closeOut outs);
+                  removeQuietly path
+                end),
+
             Case ("opening a file that does not exist", fn () =>
               A.raises "no such file" A.isIo
                 (fn () => BinIO.openIn (scratchFile "absent-binary-file"))),
@@ -304,7 +379,20 @@ functor BinIOTestsFn (C : TEST_CONFIG) =
           ]),
 
         Group ("laws",
-        [ P.forAll ("inputAll returns the whole vector", bytes, showBytes,
+        [ (* "Note that the BinIO.StreamIO.pos type, equal to the
+           * BinPrimIO.pos type, is concrete, being a synonym for
+           * Position.int."  This only has to compile. *)
+          Case ("the binary stream position is Position.int", fn () =>
+            let
+              val toPos : BinIO.StreamIO.pos -> Position.int = fn p => p
+              val fromPos : Position.int -> BinIO.StreamIO.pos = fn p => p
+              val zero = fromPos (Position.fromInt 0)
+            in
+              A.that "the two types are the same"
+                (Position.toInt (toPos zero) = 0)
+            end),
+
+          P.forAll ("inputAll returns the whole vector", bytes, showBytes,
                     fn v =>
                       let
                         val ins = openBytes v

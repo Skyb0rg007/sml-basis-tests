@@ -176,6 +176,131 @@ functor IOTestsFn (C : TEST_CONFIG) =
               A.that "writeArr is now available" (isSome writeArr)
             end),
 
+          (* "close ... Further operations on the reader (besides close and
+           * getPos) raise IO.ClosedStream."  The IO Discussion says the
+           * opposite about the same call -- "the imperative, stream, and
+           * primitive I/O modules will never raise a bare ... ClosedStream
+           * exception; these exceptions are only used in the cause field of
+           * the Io exception" -- so an Io carrying ClosedStream as its cause
+           * is accepted as readily as the bare exception. *)
+          Case ("a closed reader refuses to read", fn () =>
+            let
+              val rd as TextPrimIO.RD { readVec, close, ... } =
+                TextPrimIO.openVector "abcde"
+              fun isClosed IO.ClosedStream = true
+                | isClosed (IO.Io { cause = IO.ClosedStream, ... }) = true
+                | isClosed _ = false
+            in
+              close ();
+              A.noRaise "closing twice" close;
+              A.raises "readVec after closing" isClosed
+                (fn () => valOf readVec 1)
+            end),
+
+          Case ("a closed writer refuses to write", fn () =>
+            let
+              val TextPrimIO.WR { writeVec, close, ... } = TextPrimIO.nullWr ()
+              fun isClosed IO.ClosedStream = true
+                | isClosed (IO.Io { cause = IO.ClosedStream, ... }) = true
+                | isClosed _ = false
+            in
+              close ();
+              A.noRaise "closing twice" close;
+              A.raises "writeVec after closing" isClosed
+                (fn () => valOf writeVec (CharVectorSlice.full "abc"))
+            end),
+
+          (* "readArr(slice) ... reads upto k elements into the array slice
+           * slice, where k is the size of the slice.  This function returns
+           * the number of elements actually read ... If no elements remain
+           * before the end-of-stream, it returns 0 (this function also
+           * returns 0 when slice is empty)." *)
+          Case ("readArr fills an array slice and reports how much it read",
+            fn () =>
+              let
+                val TextPrimIO.RD { readArr, ... } =
+                  TextPrimIO.augmentReader (TextPrimIO.openVector "abcde")
+                val read = valOf readArr
+                val arr = CharArray.array (3, #"-")
+                val n = read (CharArraySlice.full arr)
+              in
+                A.that "at least one element" (n >= 1 andalso n <= 3);
+                A.eqString "and they are the first ones"
+                  (String.substring ("abcde", 0, n),
+                   CharArraySlice.vector
+                     (CharArraySlice.slice (arr, 0, SOME n)));
+                A.eqInt "an empty slice reads nothing"
+                  (0, read (CharArraySlice.slice (arr, 0, SOME 0)));
+                (* Drain, then confirm the end-of-stream answer. *)
+                let
+                  fun drain () =
+                    if read (CharArraySlice.full arr) = 0 then ()
+                    else drain ()
+                in
+                  drain ();
+                  A.eqInt "nothing left" (0, read (CharArraySlice.full arr))
+                end
+              end),
+
+          (* "avail() returns the number of bytes available on the "device",
+           * or NONE if it cannot be determined." *)
+          Case ("avail reports what is left, or that it cannot tell", fn () =>
+            let
+              val TextPrimIO.RD { avail, readVec, ... } =
+                TextPrimIO.openVector "abcde"
+              val before' = avail ()
+              val _ = valOf readVec 2
+              val after = avail ()
+            in
+              case (before', after) of
+                  (NONE, _) => ()   (* undeterminable is allowed *)
+                | (SOME a, NONE) =>
+                    A.that "a count is not negative" (a >= 0)
+                | (SOME a, SOME b) =>
+                    (A.that "the count is not negative" (a >= 0);
+                     A.that "and reading does not increase it" (b <= a))
+            end),
+
+          (* "writeVec(slice) ... writes the elements from the vector slice
+           * slice to the output device and returns the number of elements
+           * actually written." *)
+          Case ("a write reports how many elements it took", fn () =>
+            let
+              val TextPrimIO.WR { writeVec, writeArr, ... } =
+                TextPrimIO.augmentWriter (TextPrimIO.nullWr ())
+              val n = valOf writeVec (CharVectorSlice.full "abc")
+              val arr = CharArray.fromList [#"x", #"y"]
+              val m = valOf writeArr (CharArraySlice.full arr)
+            in
+              A.that "no more than was offered" (n >= 0 andalso n <= 3);
+              A.that "and the same for an array" (m >= 0 andalso m <= 2)
+            end),
+
+          (* "setPos(i) ... moves to position i in file", so re-reading from a
+           * saved position gives the same elements again. *)
+          Case ("a saved position can be returned to", fn () =>
+            let
+              val TextPrimIO.RD { getPos, setPos, readVec, endPos, ... } =
+                TextPrimIO.openVector "abcde"
+            in
+              case (getPos, setPos) of
+                  (SOME get, SOME set) =>
+                    let
+                      val start = get ()
+                      val first = valOf readVec 3
+                    in
+                      set start;
+                      A.eqString "the same elements come back"
+                        (first, valOf readVec 3);
+                      case endPos of
+                          NONE => ()
+                        | SOME atEnd =>
+                            A.eqOrder "the end is not before the start"
+                              (LESS, TextPrimIO.compare (start, atEnd ()))
+                    end
+                | _ => ()   (* random access is optional *)
+            end),
+
           Case ("positions can be read and compared", fn () =>
             let
               val TextPrimIO.RD { getPos, readVec, ... } =
@@ -259,6 +384,21 @@ functor IOTestsFn (C : TEST_CONFIG) =
                       A.eqOrder "reading moves the position forward"
                         (LESS, BinPrimIO.compare (start, later))
                     end
+            end),
+
+          Case ("a closed byte reader refuses to read", fn () =>
+            let
+              val BinPrimIO.RD { readVec, close, ... } =
+                BinPrimIO.openVector (Word8Vector.fromList
+                                        [Word8.fromInt 1, Word8.fromInt 2])
+              fun isClosed IO.ClosedStream = true
+                | isClosed (IO.Io { cause = IO.ClosedStream, ... }) = true
+                | isClosed _ = false
+            in
+              close ();
+              A.noRaise "closing twice" close;
+              A.raises "readVec after closing" isClosed
+                (fn () => valOf readVec 1)
             end),
 
           Case ("nullRd and nullWr exist for bytes too", fn () =>
