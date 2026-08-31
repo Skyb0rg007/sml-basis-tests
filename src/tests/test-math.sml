@@ -40,6 +40,26 @@ functor MathTestsFn (C : TEST_CONFIG) =
 
     val ieee = C.hasIEEEReals
     fun nan () = 0.0 / 0.0
+    fun inf () = Real.posInf
+    fun ninf () = Real.negInf
+    fun negZero () = ~0.0
+
+    (* The specification's exceptional-case tables distinguish +0 from ~0.
+     * Where the implementation does not have signed zeros, only the value is
+     * checked. *)
+    val signedZero = C.hasSignedZero
+
+    fun isNan x = Real.isNan x
+    fun isPosInf x = Real.== (x, inf ())
+    fun isNegInf x = Real.== (x, ninf ())
+    fun isZeroSigned neg x =
+      Real.== (x, 0.0)
+      andalso (not signedZero orelse Real.signBit x = neg)
+    val isPosZero = isZeroSigned false
+    val isNegZero = isZeroSigned true
+
+    (* A tolerant equality for the table entries that name a multiple of pi. *)
+    fun isNear y x = Real.abs (x - y) < 1.0e~9 * Real.max (1.0, Real.abs y)
 
     val suite = Group ("Math",
       [ Group ("constants",
@@ -130,6 +150,231 @@ functor MathTestsFn (C : TEST_CONFIG) =
              near "cosh 1" (1.5430806348152437, Math.cosh 1.0);
              near "tanh 1" (0.7615941559557649, Math.tanh 1.0)))
         ]),
+
+        (* The specification tabulates the value of each function at the
+         * infinities, the zeros and the NaN; those tables are what the
+         * following three groups check. *)
+        Group ("the exceptional cases of the elementary functions",
+          onlyIf (ieee, "implementation not declared IEEE")
+          [ Case ("sqrt", fn () =>
+              (A.that "sqrt of a negative zero keeps the sign"
+                 (isNegZero (Math.sqrt (negZero ())));
+               A.that "sqrt of a positive zero" (isPosZero (Math.sqrt 0.0));
+               A.that "sqrt of a negative number is a nan"
+                 (isNan (Math.sqrt ~1.0));
+               A.that "sqrt of an infinity is an infinity"
+                 (isPosInf (Math.sqrt (inf ()))))),
+
+            (* "If x is an infinity, these functions return NaN." *)
+            Case ("sin, cos and tan at an infinity", fn () =>
+              (A.that "sin" (isNan (Math.sin (inf ())));
+               A.that "cos" (isNan (Math.cos (inf ())));
+               A.that "tan" (isNan (Math.tan (inf ())));
+               A.that "sin of a negative infinity" (isNan (Math.sin (ninf ()))))),
+
+            (* "If the magnitude of x exceeds 1.0, they return NaN." *)
+            Case ("asin and acos outside the unit interval", fn () =>
+              (A.that "asin above" (isNan (Math.asin 1.5));
+               A.that "asin below" (isNan (Math.asin ~1.5));
+               A.that "acos above" (isNan (Math.acos 1.5));
+               A.that "acos below" (isNan (Math.acos ~1.5));
+               A.that "asin of an infinity" (isNan (Math.asin (inf ()))))),
+
+            (* "If x is +infinity, it returns pi/2; if x is -infinity, it
+             * returns -pi/2." *)
+            Case ("atan at the infinities", fn () =>
+              (A.that "positive" (isNear (Math.pi / 2.0) (Math.atan (inf ())));
+               A.that "negative"
+                 (isNear (~(Math.pi / 2.0)) (Math.atan (ninf ()))))),
+
+            (* "If x is +infinity, it returns +infinity; if x is -infinity, it
+             * returns 0." *)
+            Case ("exp at the infinities", fn () =>
+              (A.that "positive" (isPosInf (Math.exp (inf ())));
+               A.that "negative" (Real.== (0.0, Math.exp (ninf ()))))),
+
+            (* "If x < 0, they return NaN; if x = 0, they return -infinity; if
+             * x is infinity, they return infinity." *)
+            Case ("ln and log10 at and outside their domain", fn () =>
+              (A.that "ln of zero" (isNegInf (Math.ln 0.0));
+               A.that "log10 of zero" (isNegInf (Math.log10 0.0));
+               A.that "ln of a negative number" (isNan (Math.ln ~1.0));
+               A.that "log10 of a negative number" (isNan (Math.log10 ~1.0));
+               A.that "ln of an infinity" (isPosInf (Math.ln (inf ())));
+               A.that "log10 of an infinity" (isPosInf (Math.log10 (inf ()))))),
+
+            (* The table of properties for the hyperbolic functions. *)
+            Case ("the hyperbolic functions at zero and the infinities",
+              fn () =>
+                (A.that "sinh of a positive zero" (isPosZero (Math.sinh 0.0));
+                 A.that "sinh of a negative zero"
+                   (isNegZero (Math.sinh (negZero ())));
+                 A.that "sinh of an infinity" (isPosInf (Math.sinh (inf ())));
+                 A.that "sinh of a negative infinity"
+                   (isNegInf (Math.sinh (ninf ())));
+                 A.that "cosh of a zero" (Real.== (1.0, Math.cosh 0.0));
+                 A.that "cosh of a negative zero"
+                   (Real.== (1.0, Math.cosh (negZero ())));
+                 A.that "cosh of an infinity" (isPosInf (Math.cosh (inf ())));
+                 (* The table reads "cosh +-infinity = +-infinity", while the
+                  * definition given in the same paragraph, (e^x + e^-x)/2,
+                  * gives +infinity for both.  The two readings disagree only
+                  * here, so both answers are accepted. *)
+                 A.that "cosh of a negative infinity"
+                   (isPosInf (Math.cosh (ninf ()))
+                    orelse isNegInf (Math.cosh (ninf ())));
+                 A.that "tanh of a positive zero" (isPosZero (Math.tanh 0.0));
+                 A.that "tanh of a negative zero"
+                   (isNegZero (Math.tanh (negZero ())));
+                 A.that "tanh of an infinity" (Real.== (1.0, Math.tanh (inf ())));
+                 A.that "tanh of a negative infinity"
+                   (Real.== (~1.0, Math.tanh (ninf ())))))
+          ]),
+
+        (* "Rules for exceptional cases are specified in the following
+         * table." -- every row of it. *)
+        Group ("the exceptional cases of atan2",
+          onlyIf (ieee, "implementation not declared IEEE")
+          [ Case ("a zero numerator", fn () =>
+              (A.that "with a positive denominator"
+                 (isPosZero (Math.atan2 (0.0, 1.0)));
+               A.that "with a positive zero denominator"
+                 (isPosZero (Math.atan2 (0.0, 0.0)));
+               A.that "with a negative denominator"
+                 (isNear Math.pi (Math.atan2 (0.0, ~1.0))))),
+
+            Case ("a zero numerator of either sign", fn () =>
+              if not signedZero then ()
+              else
+                (A.that "a negative zero over a positive number"
+                   (isNegZero (Math.atan2 (negZero (), 1.0)));
+                 A.that "a negative zero over a positive zero"
+                   (isNegZero (Math.atan2 (negZero (), 0.0)));
+                 A.that "a positive zero over a negative zero"
+                   (isNear Math.pi (Math.atan2 (0.0, negZero ())));
+                 A.that "a negative zero over a negative zero"
+                   (isNear (~Math.pi) (Math.atan2 (negZero (), negZero ())));
+                 A.that "a negative zero over a negative number"
+                   (isNear (~Math.pi) (Math.atan2 (negZero (), ~1.0))))),
+
+            Case ("a zero denominator", fn () =>
+              (A.that "a positive numerator"
+                 (isNear (Math.pi / 2.0) (Math.atan2 (1.0, 0.0)));
+               A.that "a negative numerator"
+                 (isNear (~(Math.pi / 2.0)) (Math.atan2 (~1.0, 0.0)));
+               if not signedZero then ()
+               else
+                 (A.that "a positive numerator over a negative zero"
+                    (isNear (Math.pi / 2.0) (Math.atan2 (1.0, negZero ())));
+                  A.that "a negative numerator over a negative zero"
+                    (isNear (~(Math.pi / 2.0))
+                            (Math.atan2 (~1.0, negZero ())))))),
+
+            Case ("an infinite denominator", fn () =>
+              (A.that "a positive finite over a positive infinity"
+                 (isPosZero (Math.atan2 (1.0, inf ())));
+               A.that "a positive finite over a negative infinity"
+                 (isNear Math.pi (Math.atan2 (1.0, ninf ())));
+               A.that "a negative finite over a negative infinity"
+                 (isNear (~Math.pi) (Math.atan2 (~1.0, ninf ()))))),
+
+            Case ("an infinite numerator", fn () =>
+              (A.that "over a finite value"
+                 (isNear (Math.pi / 2.0) (Math.atan2 (inf (), 1.0)));
+               A.that "negative, over a finite value"
+                 (isNear (~(Math.pi / 2.0)) (Math.atan2 (ninf (), 1.0)));
+               A.that "over a positive infinity"
+                 (isNear (Math.pi / 4.0) (Math.atan2 (inf (), inf ())));
+               A.that "negative, over a positive infinity"
+                 (isNear (~(Math.pi / 4.0)) (Math.atan2 (ninf (), inf ())));
+               A.that "over a negative infinity"
+                 (isNear (3.0 * Math.pi / 4.0) (Math.atan2 (inf (), ninf ())));
+               A.that "negative, over a negative infinity"
+                 (isNear (~3.0 * Math.pi / 4.0)
+                         (Math.atan2 (ninf (), ninf ())))))
+          ]),
+
+        Group ("the exceptional cases of pow",
+          onlyIf (ieee, "implementation not declared IEEE")
+          [ (* "x, including NaN | 0 | 1" *)
+            Case ("any base to the zero is one", fn () =>
+              (A.that "a number" (Real.== (1.0, Math.pow (2.5, 0.0)));
+               A.that "a nan" (Real.== (1.0, Math.pow (nan (), 0.0)));
+               A.that "an infinity" (Real.== (1.0, Math.pow (inf (), 0.0)));
+               A.that "a zero" (Real.== (1.0, Math.pow (0.0, 0.0))))),
+
+            Case ("an infinite exponent", fn () =>
+              (A.that "a base above one, positive exponent"
+                 (isPosInf (Math.pow (2.0, inf ())));
+               A.that "a base below one, positive exponent"
+                 (isPosZero (Math.pow (0.5, inf ())));
+               A.that "a base above one, negative exponent"
+                 (isPosZero (Math.pow (2.0, ninf ())));
+               A.that "a base below one, negative exponent"
+                 (isPosInf (Math.pow (0.5, ninf ())));
+               A.that "a magnitude above one is what counts"
+                 (isPosInf (Math.pow (~2.0, inf ()))))),
+
+            (* "+-1 | +-infinity | NaN" *)
+            Case ("one to an infinite power is a nan", fn () =>
+              (A.that "one" (isNan (Math.pow (1.0, inf ())));
+               A.that "minus one" (isNan (Math.pow (~1.0, inf ())));
+               A.that "one to a negative infinity"
+                 (isNan (Math.pow (1.0, ninf ()))))),
+
+            Case ("an infinite base", fn () =>
+              (A.that "positive, positive exponent"
+                 (isPosInf (Math.pow (inf (), 2.0)));
+               A.that "positive, negative exponent"
+                 (isPosZero (Math.pow (inf (), ~2.0)));
+               A.that "negative, odd positive exponent"
+                 (isNegInf (Math.pow (ninf (), 3.0)));
+               A.that "negative, even positive exponent"
+                 (isPosInf (Math.pow (ninf (), 2.0)));
+               A.that "negative, non-integral positive exponent"
+                 (isPosInf (Math.pow (ninf (), 2.5)));
+               A.that "negative, odd negative exponent"
+                 (isNegZero (Math.pow (ninf (), ~3.0)));
+               A.that "negative, even negative exponent"
+                 (isPosZero (Math.pow (ninf (), ~2.0))))),
+
+            Case ("a nan argument", fn () =>
+              (A.that "a nan base" (isNan (Math.pow (nan (), 2.0)));
+               A.that "a nan exponent" (isNan (Math.pow (2.0, nan ())));
+               A.that "both" (isNan (Math.pow (nan (), nan ()))))),
+
+            (* "finite x < 0 | finite non-integer y | NaN" *)
+            Case ("a negative base with a non-integral exponent is a nan",
+              fn () =>
+                (A.that "a half power" (isNan (Math.pow (~2.0, 0.5)));
+                 A.that "a negative non-integral power"
+                   (isNan (Math.pow (~2.0, ~1.5)));
+                 A.that "an integral power is fine"
+                   (Real.== (~8.0, Math.pow (~2.0, 3.0))))),
+
+            Case ("a zero base", fn () =>
+              (A.that "odd negative exponent"
+                 (isPosInf (Math.pow (0.0, ~3.0)));
+               A.that "even negative exponent"
+                 (isPosInf (Math.pow (0.0, ~2.0)));
+               A.that "non-integral negative exponent"
+                 (isPosInf (Math.pow (0.0, ~2.5)));
+               A.that "odd positive exponent" (isPosZero (Math.pow (0.0, 3.0)));
+               A.that "even positive exponent"
+                 (isPosZero (Math.pow (0.0, 2.0))))),
+
+            Case ("a negative zero base", fn () =>
+              if not signedZero then ()
+              else
+                (A.that "odd negative exponent"
+                   (isNegInf (Math.pow (negZero (), ~3.0)));
+                 A.that "even negative exponent"
+                   (isPosInf (Math.pow (negZero (), ~2.0)));
+                 A.that "odd positive exponent"
+                   (isNegZero (Math.pow (negZero (), 3.0)));
+                 A.that "even positive exponent"
+                   (isPosZero (Math.pow (negZero (), 2.0))))
+          )]),
 
         Group ("laws",
         [ P.forAll ("the Pythagorean identity", moderate, showR,
@@ -228,7 +473,79 @@ functor MathTestsFn (C : TEST_CONFIG) =
                     G.map (fn u => u * 4.0 - 2.0) G.unitReal, showR,
                     fn x =>
                       Real.abs (Math.tanh x - Math.sinh x / Math.cosh x)
-                      < tol)
+                      < tol),
+
+          (* "that is, the values (e(x) - e(-x)) / 2, (e(x) + e(-x)) / 2, and
+           * (sinh x)/(cosh x)." *)
+          P.forAll ("the hyperbolic functions are what their definitions say",
+                    G.map (fn u => u * 4.0 - 2.0) G.unitReal, showR,
+                    fn x =>
+                      Real.abs (Math.sinh x
+                                - (Math.exp x - Math.exp (~x)) / 2.0)
+                      < loose
+                      andalso Real.abs (Math.cosh x
+                                        - (Math.exp x + Math.exp (~x)) / 2.0)
+                              < loose),
+
+          (* "Its result is guaranteed to be in the closed interval
+           * [-pi/2,pi/2]" for asin, "[0,pi]" for acos, and the open interval
+           * "(-pi/2,pi/2)" for atan. *)
+          P.forAll ("the inverse functions stay in their principal ranges",
+                    unitRange, showR,
+                    fn x =>
+                      let
+                        val a = Math.asin x
+                        val b = Math.acos x
+                      in
+                        a >= ~(Math.pi / 2.0) - tol
+                        andalso a <= Math.pi / 2.0 + tol
+                        andalso b >= 0.0 - tol andalso b <= Math.pi + tol
+                      end),
+
+          P.forAll ("atan stays inside a half turn", G.anyReal, showR,
+                    fn x =>
+                      P.implies (Real.isFinite x,
+                                 Math.atan x > ~(Math.pi / 2.0)
+                                 andalso Math.atan x < Math.pi / 2.0)),
+
+          (* "returns the arc tangent of (y/x) in the closed interval
+           * [-pi,pi] ... It holds that sign (cos (atan2 (y,x))) = sign(x) and
+           * sign (sin (atan2 (y,x))) = sign(y)." *)
+          P.forAll ("atan2 lands in a full turn and keeps both signs",
+                    G.pair (moderate, moderate), Show.pair (showR, showR),
+                    fn (y, x) =>
+                      let val a = Math.atan2 (y, x)
+                      in
+                        a >= ~Math.pi - tol andalso a <= Math.pi + tol
+                        andalso P.implies (Real.abs x > 0.01
+                                           andalso Real.abs y > 0.01,
+                                           Real.sign (Math.cos a) = Real.sign x
+                                           andalso Real.sign (Math.sin a)
+                                                   = Real.sign y)
+                      end),
+
+          (* "When x = 0, this corresponds to an angle of 90 degrees, and the
+           * result is (real (sign y)) * pi/2.0." *)
+          P.forAll ("atan2 with a zero denominator is a quarter turn",
+                    moderate, showR,
+                    fn y =>
+                      P.implies (Real.abs y > 0.01,
+                                 Real.abs (Math.atan2 (y, 0.0)
+                                           - real (Real.sign y) * Math.pi / 2.0)
+                                 < tol)),
+
+          P.forAll ("pow with an integral exponent is repeated multiplication",
+                    G.pair (positive, G.int (0, 5)),
+                    Show.pair (showR, Show.int),
+                    fn (x, k) =>
+                      let
+                        fun power (_, 0) = 1.0
+                          | power (b, n) = b * power (b, n - 1)
+                        val expected = power (x, k)
+                      in
+                        Real.abs (Math.pow (x, real k) - expected)
+                        < loose * Real.max (1.0, Real.abs expected)
+                      end)
         ])
       ])
   end
