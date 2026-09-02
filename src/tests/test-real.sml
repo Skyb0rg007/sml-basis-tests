@@ -291,8 +291,19 @@ functor RealTestsFn (C : TEST_CONFIG) =
                 A.that "and a nan fractional part" (Real.isNan (#frac atNan))
               end),
 
-            (* "If r = t then it returns r.  If either argument is NaN, this
-             * returns NaN.  If r is +-infinity, it returns +-infinity." *)
+            (* "returns the next representable real after r in the direction
+             * of t.  Thus, if t is less than r, nextAfter returns the largest
+             * representable floating-point number less than r.  If r = t then
+             * it returns r.  If either argument is NaN, this returns NaN.  If
+             * r is +-infinity, it returns +-infinity."
+             *
+             * The "Thus" sentence and the last one overlap for r = inf and
+             * t < r.  The three "If" sentences are read as special cases
+             * carved out of the general rule, since on the other reading the
+             * infinity sentence would never apply to anything -- r = t
+             * already covers nextAfter (inf, inf).  Note this is a deliberate
+             * departure from C99, where nextafter(INFINITY, 1.0) is the
+             * largest finite value. *)
             Case ("nextAfter on equal, nan and infinite arguments", fn () =>
               (A.eqRealExact "equal arguments" (1.0, Real.nextAfter (1.0, 1.0));
                A.that "a nan first" (Real.isNan (Real.nextAfter (nan (), 1.0)));
