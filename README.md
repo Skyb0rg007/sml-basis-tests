@@ -569,22 +569,41 @@ structures. The distinct defects:
   constant sequence at a negative constant index. That is worked around by
   `Assert.hide` rather than by dropping the tests.
 
-Poly/ML 5.7.1 dates from 2018 and is what Ubuntu ships; a current release may
-behave differently.
+Poly/ML 5.7.1 dates from 2018 and is what Ubuntu ships. A current build does
+behave differently, and much better: see below.
 
 ### Against the development sources
 
 The three columns above are the packaged releases, which is what a reader gets
-from a package manager. MLton and SML/NJ were also built from their git HEAD
-and run on the same suite revision at the same defaults:
+from a package manager. All three were also built from their git HEAD and run
+on the same suite revision at the same defaults:
 
 | | tests | passed | failed | errored | skipped |
 | --- | --- | --- | --- | --- | --- |
 | SML/NJ 2026.2 (`7defd2d`, 2 Sep 2026) | 2359 | 2295 | 56 | 0 | 8 |
 | MLton `20260902.000614-ga65f71f` (`a65f71f`, 1 Sep 2026) | 2519 | 2506 | 5 | 0 | 8 |
+| Poly/ML 5.9.2 (`d615dad`, 10 Jul 2026) | 2353 | 2327 | 15 | 3 | 8 |
 
-The totals are unchanged, so each profile still names the same optional
-structures it did against the release.
+Each total is unchanged from the release beside it, so every profile still
+names the same optional structures it did.
+
+**Poly/ML 5.9.2 fixes most of what 5.7.1 gets wrong.** Seventeen of its
+thirty-three reports are gone: the whole block of 64-bit word conversions
+(`Word8.toLargeX` sign-extends, and `LargeWord`, `Word64` and `SysWord` agree
+with the compositions the `WORD` discussion writes out) and the three
+non-finite `Real` text conversions. `LargeWord.~>> (0w1, 0w64)` is still `1`,
+and the rest of the fourteen are unchanged.
+
+Two reports are new, and they are a regression: `#exp (Real.toDecimal 0.0)` is
+`1` where 5.7.1 gives the specified `0`, which also falsifies the `EXACT`
+round trip for `0.0E1`.
+
+The tally does not show the most useful change. `dateFmtHandlesZone` is off by
+default because `Date.fmt "%Z"` on a date with an explicit offset corrupts
+5.7.1's heap and kills the run; turning it on, 5.7.1 still dies with a
+segmentation fault partway through `Date`, while 5.9.2 completes and merely
+reports the call as wrong. The flag stays off, since the default has to be
+safe for what Ubuntu ships.
 
 **MLton has fixed the `Bool` scanner.** All three `Bool` failures pass on the
 development sources, and the merge at the tip of the branch tested here is
@@ -596,12 +615,14 @@ upstream's `bool-scan-bug`. The other five are unchanged: the two
 same order. `String.isSubstring "" ""` is still `false`, and
 `Bool.fromString "TRUE"` is still `NONE`.
 
-Building either from source is a longer errand than installing it. MLton needs
-an existing MLton to bootstrap from and `BOOTSTRAP_STYLE=0`, since the default
-style resolves the compiler it runs to `$(BIN)/mlton` before that exists; its
-`tools` stage then fails at `mlnlffigen` if the bootstrapping MLton is the
-Debian package, which is stripped of `ckit-lib`. SML/NJ builds its own LLVM 21
-before it builds anything of its own.
+Two of the three source builds are a longer errand than installing them.
+MLton needs an existing MLton to bootstrap from and `BOOTSTRAP_STYLE=0`, since
+the default style resolves the compiler it runs to `$(BIN)/mlton` before that
+exists; its `tools` stage then fails at `mlnlffigen` if the bootstrapping
+MLton is the Debian package, which is stripped of `ckit-lib`. SML/NJ builds
+its own LLVM 21 before it builds anything of its own. Poly/ML is the
+exception: `./configure && make && make install`, with its own boot images in
+the tree and nothing to install first.
 
 ## Continuous integration
 

@@ -570,9 +570,14 @@ functor DateTestsFn (C : TEST_CONFIG) =
                         val known = "aAbBcdHIjmMpSUwWxXyYZ%"
                         val d = mk (2000, Date.Jan, 1, 0, 0, 0)
                       in
-                        P.implies (not (Char.contains known c),
-                                   Date.fmt ("%" ^ String.str c) d
-                                   = String.str c)
+                        (* impliesBy, not implies: for a directive the
+                         * implementation does know -- %Z on Poly/ML -- the
+                         * conclusion raises rather than merely being false,
+                         * and a strict implies would evaluate it anyway. *)
+                        P.impliesBy (not (Char.contains known c),
+                                     fn () =>
+                                       Date.fmt ("%" ^ String.str c) d
+                                       = String.str c)
                       end),
 
           P.forAll ("compare is the lexicographic order on the fields",
