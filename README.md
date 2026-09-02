@@ -416,7 +416,8 @@ structure it provides passes:
 - `Bool.scan` neither skips leading whitespace nor ignores case, although the
   specification asks for both: `Bool.fromString "   true"` and
   `Bool.fromString "TRUE"` are `NONE`. `Int.fromString "   42"` skips
-  whitespace correctly, so this is specific to `Bool`. Three of the eight.
+  whitespace correctly, so this is specific to `Bool`. Three of the eight, and
+  the three the development sources have since fixed; see below.
 - `Char.fromCString` and `String.fromCString` accept an unescaped double
   quote, which the specification singles out as the one character C does not
   allow bare: `Char.fromCString "\""` should be `NONE` and
@@ -570,6 +571,37 @@ structures. The distinct defects:
 
 Poly/ML 5.7.1 dates from 2018 and is what Ubuntu ships; a current release may
 behave differently.
+
+### Against the development sources
+
+The three columns above are the packaged releases, which is what a reader gets
+from a package manager. MLton and SML/NJ were also built from their git HEAD
+and run on the same suite revision at the same defaults:
+
+| | tests | passed | failed | errored | skipped |
+| --- | --- | --- | --- | --- | --- |
+| SML/NJ 2026.2 (`7defd2d`, 2 Sep 2026) | 2359 | 2295 | 56 | 0 | 8 |
+| MLton `20260902.000614-ga65f71f` (`a65f71f`, 1 Sep 2026) | 2519 | 2506 | 5 | 0 | 8 |
+
+The totals are unchanged, so each profile still names the same optional
+structures it did against the release.
+
+**MLton has fixed the `Bool` scanner.** All three `Bool` failures pass on the
+development sources, and the merge at the tip of the branch tested here is
+upstream's `bool-scan-bug`. The other five are unchanged: the two
+`fromCString` bare-quote failures, `TextIO.endOfStream` after `inputAll`, the
+`Date.date` offset reduction, and the determined `TextIO.StreamIO` stream.
+
+**SML/NJ 2026.2 fails the same 56 tests as 2026.1** — the same names in the
+same order. `String.isSubstring "" ""` is still `false`, and
+`Bool.fromString "TRUE"` is still `NONE`.
+
+Building either from source is a longer errand than installing it. MLton needs
+an existing MLton to bootstrap from and `BOOTSTRAP_STYLE=0`, since the default
+style resolves the compiler it runs to `$(BIN)/mlton` before that exists; its
+`tools` stage then fails at `mlnlffigen` if the bootstrapping MLton is the
+Debian package, which is stripped of `ckit-lib`. SML/NJ builds its own LLVM 21
+before it builds anything of its own.
 
 ## Continuous integration
 
